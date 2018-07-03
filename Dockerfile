@@ -1,16 +1,14 @@
-FROM openjdk:8-jre-alpine
+FROM golang:latest as builder 
 
-ARG GIT_REPOSITORY=
-ARG GIT_BRANCH_NAME=
-ARG GIT_COMMIT_ID=
-ARG ARTIFACT_VERSION=1.0-SNAPSHOT
+RUN mkdir -p "$GOPATH/src/mbenabda.com/k8s-grafana-dashboards-controller" /dist
+ADD . $GOPATH/src/mbenabda.com/k8s-grafana-dashboards-controller
+WORKDIR $GOPATH/src/mbenabda.com/k8s-grafana-dashboards-controller
 
-ADD dashboards-controller/target/dashboards-controller-$ARTIFACT_VERSION.jar ./app.jar
+RUN curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh \
+    && dep ensure -v \
+    && CGO_ENABLED=0 GOOS=linux go build -a -ldflags "-s -w" -installsuffix nocgo -o /dist/binary . 
 
-ENTRYPOINT [ "java", "-jar", "app.jar" ]
 
-LABEL GIT_REPOSITORY=$GIT_REPOSITORY \
-      GIT_BRANCH_NAME=$GIT_BRANCH_NAME \
-      GIT_COMMIT_ID=$GIT_COMMIT_ID \
-      ARTIFACT_VERSION=$ARTIFACT_VERSION
-      
+FROM scratch
+COPY --from=builder /dist/binary /controller
+ENTRYPOINT ["/controller"]
