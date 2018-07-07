@@ -6,6 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	"mbenabda.com/k8s-grafana-dashboards-controller/grafana"
+	"time"
 )
 
 type DashboardsController struct {
@@ -26,12 +27,12 @@ func New(dashboards grafana.DashboardsInterface, k8sConfig *rest.Config, namespa
 
 func (c *DashboardsController) Run(ctx context.Context) error {
 	fmt.Println("we're running !")
-
 	select {
+	case <-time.After(time.Second):
+		return fmt.Errorf("fatal error happened while controller working")
 	case <-ctx.Done():
-		fmt.Println("controller done")
+		return nil
 	}
-	return nil
 }
 
 /*

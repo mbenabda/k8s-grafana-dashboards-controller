@@ -93,68 +93,53 @@ func main() {
 
 	filterOptions.LabelSelector = selector.Value
 
-	if err := runWith(kubeconfig, grafanaOptions, filterOptions); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n\n", err)
+	grafana, err := buildGrafanaClient(grafanaOptions)
+	if err != nil {
+		errorLogger().Printf("could not build a grafana client : %v\n\n", err)
 		kingpin.Usage()
 		os.Exit(1)
-	}
-}
-
-func runWith(kubeconfig string, grafanaOpts *GrafanaOptions, filterOpts *FilterOptions) error {
-	grafana, err := buildGrafanaClient(grafanaOpts)
-	if err != nil {
-		return fmt.Errorf("could not build a grafana client : %v", err)
 	}
 
 	k8sConfig, err := buildK8sConfig(kubeconfig)
 	if err != nil {
-		return fmt.Errorf("could not build kubernetes configuration : %v", err)
+		errorLogger().Printf("could not build kubernetes configuration : %v\n\n", err)
+		kingpin.Usage()
+		os.Exit(1)
 	}
 
-	return run(grafana, k8sConfig, filterOpts.Namespace, filterOpts.LabelSelector)
-}
-
-func run(grafana grafana.Interface, k8sConfig *rest.Config, namespace string, labelsSelector labels.Selector) error {
 	c := controller.New(
 		grafana.Dashboards(),
 		k8sConfig,
-		namespace,
-		labelsSelector,
+		filterOptions.Namespace,
+		filterOptions.LabelSelector,
 	)
 
+	err = run(c)
+	if err != nil {
+		log.Fatalf("Unhandled error received. Exiting... : %v\n\n", err)
+	}
+}
+
+func run(c *controller.DashboardsController) error {
 	sig := make(chan os.Signal)
 	defer close(sig)
 
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
-	errs := make(chan error, 1)
-	defer close(errs)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	wg, ctx := errgroup.WithContext(ctx)
 	defer cancel()
 
-	go func() {
-		wg.Go(func() error { return c.Run(ctx) })
-
-		if err := wg.Wait(); err != nil {
-			errs <- err
-			return
-		}
-	}()
+	wg.Go(func() error { return c.Run(ctx) })
 
 	select {
 	case s := <-sig:
 		log.Printf("received %v signal. Shutting down\n", s)
-	case err := <-errs:
-		if err != nil {
-			return err
-		}
+		cancel()
 	case <-ctx.Done():
-		log.Println("work done. exiting")
 	}
 
-	return nil
+	return wg.Wait()
 }
 
 func buildGrafanaClient(opts *GrafanaOptions) (grafana.Interface, error) {
@@ -177,4 +162,8 @@ func buildK8sConfig(kubeconfig string) (*rest.Config, error) {
 
 	log.Println("resolving in-cluster configuration")
 	return rest.InClusterConfig()
+}
+
+func errorLogger() *log.Logger {
+	return log.New(os.Stderr, "", 0)
 }
