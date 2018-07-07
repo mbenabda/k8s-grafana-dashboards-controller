@@ -115,7 +115,7 @@ func runWith(kubeconfig string, grafanaOpts *GrafanaOptions, filterOpts *FilterO
 }
 
 func run(grafana grafana.Interface, k8sConfig *rest.Config, namespace string, labelsSelector labels.Selector) error {
-	controller := controller.New(
+	c := controller.New(
 		grafana.Dashboards(),
 		k8sConfig,
 		namespace,
@@ -127,16 +127,16 @@ func run(grafana grafana.Interface, k8sConfig *rest.Config, namespace string, la
 
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 
-	errs := make(chan error)
+	errs := make(chan error, 1)
 	defer close(errs)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	wg, ctx := errgroup.WithContext(ctx)
 	defer cancel()
 
-	wg.Go(func() error { return controller.Run(ctx) })
-
 	go func() {
+		wg.Go(func() error { return c.Run(ctx) })
+
 		if err := wg.Wait(); err != nil {
 			errs <- err
 			return

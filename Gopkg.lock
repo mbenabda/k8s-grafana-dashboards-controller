@@ -170,12 +170,19 @@
   branch = "master"
   name = "golang.org/x/net"
   packages = [
+    "context",
     "http/httpguts",
     "http2",
     "http2/hpack",
     "idna"
   ]
   revision = "ed29d75add3d7c4bf7ca65aac0c6df3d1420216f"
+
+[[projects]]
+  branch = "master"
+  name = "golang.org/x/sync"
+  packages = ["errgroup"]
+  revision = "1d60e4601c6fd243af51cc01ddf169918a5407ca"
 
 [[projects]]
   branch = "master"
@@ -305,6 +312,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "4045d6db659c01b1209e0b537d77908b47366c2f12123e410437b4376a3a61bf"
+  inputs-digest = "143641c68d36e46591e9aa39bdb14e431e71b6d8667752e82da315e0cd95269b"
   solver-name = "gps-cdcl"
   solver-version = 1

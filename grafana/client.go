@@ -10,9 +10,10 @@ import (
 )
 
 type clientBase struct {
-	baseURL    *url.URL
-	httpClient *http.Client
-	auth       authInterface
+	baseURL             *url.URL
+	httpClient          *http.Client
+	authorizationHeader string
+	basicAuth           *url.Userinfo
 }
 
 func NewWithApiKey(baseURL *url.URL, apiKey string) (Interface, error) {
@@ -20,12 +21,19 @@ func NewWithApiKey(baseURL *url.URL, apiKey string) (Interface, error) {
 }
 
 func NewWithApiKeyAndClient(baseURL *url.URL, client *http.Client, apiKey string) (Interface, error) {
-	auth, err := newApiKeyAuth(apiKey)
-	if err != nil {
-		return nil, err
+	if apiKey == "" {
+		return nil, fmt.Errorf("an API key is required to authenticate against the Grafana API")
 	}
 
-	return newClientSet(baseURL, client, auth), nil
+	return GrafanaClient{
+		dashboards: DashboardsClient{
+			clientBase{
+				baseURL:             baseURL,
+				httpClient:          client,
+				authorizationHeader: fmt.Sprintf("Bearer %s", apiKey),
+			},
+		},
+	}, nil
 }
 
 func NewWithUserCredentials(baseURL *url.URL, username, password string) (Interface, error) {
@@ -33,25 +41,21 @@ func NewWithUserCredentials(baseURL *url.URL, username, password string) (Interf
 }
 
 func NewWithUserCredentialsAndClient(baseURL *url.URL, client *http.Client, username, password string) (Interface, error) {
-	auth, err := newBasicAuth(username, password)
-	if err != nil {
-		return nil, err
+	if username == "" {
+		return nil, fmt.Errorf("a username is required to authenticate against the Grafana API")
+	} else if password == "" {
+		return nil, fmt.Errorf("a password is required to authenticate against the Grafana API")
 	}
 
-	return newClientSet(baseURL, client, auth), nil
-}
-
-func newClientSet(baseURL *url.URL, delegate *http.Client, auth authInterface) Interface {
 	return GrafanaClient{
 		dashboards: DashboardsClient{
 			clientBase{
-				baseURL,
-				delegate,
-				auth,
+				baseURL:    baseURL,
+				httpClient: client,
+				basicAuth:  url.UserPassword(username, password),
 			},
 		},
-	}
-
+	}, nil
 }
 
 func (c *clientBase) newGetRequest(uri string, params url.Values) (*http.Request, error) {
@@ -72,17 +76,22 @@ func (c *clientBase) newRequest(method, uri string, params url.Values, body io.R
 	if params != nil {
 		url.RawQuery = params.Encode()
 	}
-	url = c.auth.authenticateUrl(url)
+	if c.basicAuth != nil {
+		url.User = c.basicAuth
+	}
 
 	req, err := http.NewRequest(method, url.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("could not create request : %v", err)
 	}
 
+	if c.authorizationHeader != "" {
+		req.Header.Set("Authorization", c.authorizationHeader)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	return c.auth.authenticateRequest(req), nil
+	return req, nil
 }
 
 /*

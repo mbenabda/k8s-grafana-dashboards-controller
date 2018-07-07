@@ -9,17 +9,26 @@ import (
 )
 
 type DashboardsController struct {
+	dashboards    grafana.DashboardsInterface
+	k8sConfig     *rest.Config
+	namespace     string
+	labelSelector labels.Selector
 }
 
-func New(grafana grafana.DashboardsInterface, k8sConfig *rest.Config, namespace string, selector labels.Selector) *DashboardsController {
-	return nil
+func New(dashboards grafana.DashboardsInterface, k8sConfig *rest.Config, namespace string, selector labels.Selector) *DashboardsController {
+	return &DashboardsController{
+		dashboards:    dashboards,
+		k8sConfig:     k8sConfig,
+		namespace:     namespace,
+		labelSelector: selector,
+	}
 }
 
-func (c *DashboardsController) Run(context context.Context) error {
+func (c *DashboardsController) Run(ctx context.Context) error {
 	fmt.Println("we're running !")
 
 	select {
-	case <-context.Done():
+	case <-ctx.Done():
 		fmt.Println("controller done")
 	}
 	return nil
