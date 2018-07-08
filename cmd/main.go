@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
-	"k8s.io/apimachinery/pkg/fields"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/cache"
@@ -21,8 +23,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	controller "mbenabda.com/k8s-grafana-dashboards-controller/controller"
-	"mbenabda.com/k8s-grafana-dashboards-controller/grafana"
+	controller "mbenabda.com/k8s-grafana-dashboards-controller/pkg/controller"
+	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 )
 
 type FilterOptions struct {
@@ -90,8 +92,9 @@ func main() {
 
 	selector := SelectorValueHolder(kingpin.
 		Flag("selector", "configmap labels selector").
-		PlaceHolder("label1=value1,label2=value2").
-		Envar("CONFIGMAP_SELECTOR"))
+		Envar("CONFIGMAP_SELECTOR").
+		Default(labels.Everything().String()).
+		PlaceHolder("label1=value1,label2=value2"))
 
 	kingpin.Flag("kubeconfig", "path to a kubernetes config file defining a \"current\" context.").
 		ExistingFileVar(&kubeconfig)
@@ -114,17 +117,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = run(grafana, restConfig, filterOptions)
-	if err != nil {
-		log.Fatalf("Unhandled error received. Exiting... : %v\n\n", err)
-	}
-}
-
-func run(grafana grafana.Interface, restConfig *rest.Config, filterOptions *FilterOptions) error {
 	clients, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		return fmt.Errorf("could not create kubernetes client : %v", err)
+		errorLogger().Printf("could not create kubernetes client : %v\n", err)
+		os.Exit(1)
 	}
+
+	run(grafana, clients, filterOptions)
+}
+
+func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions *FilterOptions) {
+	configmaps := cache.NewSharedIndexInformer(
+		&cache.ListWatch{
+			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+				options.LabelSelector = filterOptions.LabelSelector.String()
+				return clients.CoreV1().ConfigMaps(filterOptions.Namespace).List(options)
+			},
+			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+				options.LabelSelector = filterOptions.LabelSelector.String()
+				return clients.CoreV1().ConfigMaps(filterOptions.Namespace).Watch(options)
+			},
+		},
+		&v1.ConfigMap{},
+		1*time.Hour,
+		cache.Indexers{},
+	)
 
 	sig := make(chan os.Signal)
 	defer close(sig)
@@ -135,29 +152,18 @@ func run(grafana grafana.Interface, restConfig *rest.Config, filterOptions *Filt
 	wg, ctx := errgroup.WithContext(ctx)
 	defer cancel()
 
-	configmaps := cache.NewSharedIndexInformer(
-		cache.NewListWatchFromClient(clients.CoreV1().RESTClient(), "configmaps", filterOptions.Namespace, fields.Everything()),
-		&v1.ConfigMap{},
-		1*time.Hour,
-		cache.Indexers{},
-	)
-
-	go func() { configmaps.Run(ctx.Done()) }()
+	wg.Go(func() error {
+		configmaps.Run(ctx.Done())
+		return nil
+	})
 
 	wg.Go(func() error {
-		if !cache.WaitForCacheSync(ctx.Done(), configmaps.HasSynced) {
-			return fmt.Errorf("unable to sync cache")
-		}
-
-		log.Println("caches have synced, starting controller")
-
-		c := controller.New(
+		controller.New(
 			grafana.Dashboards(),
 			clients,
 			configmaps,
-			filterOptions.LabelSelector,
-		)
-		return c.Run(ctx)
+		).Run(ctx)
+		return nil
 	})
 
 	select {
@@ -167,7 +173,7 @@ func run(grafana grafana.Interface, restConfig *rest.Config, filterOptions *Filt
 	case <-ctx.Done():
 	}
 
-	return wg.Wait()
+	wg.Wait()
 }
 
 func buildGrafanaClient(opts *GrafanaOptions) (grafana.Interface, error) {
@@ -191,5 +197,5 @@ func buildK8sConfig(kubeconfig string) (*rest.Config, error) {
 }
 
 func errorLogger() *log.Logger {
-	return log.New(os.Stderr, "", 0)
+	return log.New(os.Stderr, "", log.LstdFlags)
 }

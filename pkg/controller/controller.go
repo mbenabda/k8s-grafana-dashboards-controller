@@ -3,35 +3,53 @@ package controller
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/cache"
 	"log"
-	"mbenabda.com/k8s-grafana-dashboards-controller/grafana"
+	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 	"os"
 
 	"reflect"
 )
 
 type DashboardsController struct {
-	dashboards         grafana.DashboardsInterface
-	clients            kubernetes.Interface
-	configmapsInformer cache.SharedIndexInformer
-	labelSelector      labels.Selector
-	errorLogger        *log.Logger
+	dashboards  grafana.DashboardsInterface
+	clients     kubernetes.Interface
+	configmaps  cache.SharedIndexInformer
+	errorLogger *log.Logger
 }
 
-func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer, selector labels.Selector) *DashboardsController {
-	c := &DashboardsController{
-		dashboards:         dashboards,
-		clients:            clients,
-		configmapsInformer: configmaps,
-		labelSelector:      selector,
-		errorLogger:        log.New(os.Stderr, "", 0),
+func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer) *DashboardsController {
+	return &DashboardsController{
+		dashboards:  dashboards,
+		clients:     clients,
+		configmaps:  configmaps,
+		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
 	}
+}
 
-	configmaps.AddEventHandler(cache.ResourceEventHandlerFuncs{
+func keyOf(cm *v1.ConfigMap) (string, error) {
+	return cache.DeletionHandlingMetaNamespaceKeyFunc(cm)
+}
+
+func asDashboard(cm *v1.ConfigMap) (grafana.Dashboard, error) {
+	data := cm.Data
+	keys := reflect.ValueOf(data).MapKeys()
+	if len(keys) > 0 {
+		firstKeyValue := data[keys[0].String()]
+		return grafana.NewDashboard([]byte(firstKeyValue))
+	}
+	key, _ := keyOf(cm)
+	return grafana.Dashboard{}, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
+
+}
+
+func (c *DashboardsController) Run(ctx context.Context) {
+	if !cache.WaitForCacheSync(ctx.Done(), c.configmaps.HasSynced) {
+		return
+	}
+	c.configmaps.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			cm := obj.(*v1.ConfigMap)
 
@@ -43,7 +61,7 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 				return
 			}
 
-			if err := dashboards.Import(dashboard); err != nil {
+			if err := c.dashboards.Import(dashboard); err != nil {
 				if err != nil {
 					c.errorLogger.Printf("could not import the Dashboard from ConfigMap %v in grafana: %v", key, err)
 					return
@@ -84,13 +102,13 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 				return
 			}
 
-			err = dashboards.Delete(oldDashboardSlug)
+			err = c.dashboards.Delete(oldDashboardSlug)
 			if err != nil {
 				c.errorLogger.Printf("could not delete Dashboard %v defined in ConfigMap %v : %v", oldDashboardSlug, oldObjKey, err)
 				return
 			}
 
-			err = dashboards.Import(dashboard)
+			err = c.dashboards.Import(dashboard)
 			if err != nil {
 				c.errorLogger.Printf("could not import Dashboard defined in ConfigMap %v : %v", key, err)
 				return
@@ -115,7 +133,7 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 				return
 			}
 
-			if err := dashboards.Delete(slug); err != nil {
+			if err := c.dashboards.Delete(slug); err != nil {
 				if err != nil {
 					c.errorLogger.Printf("could not delet the Dashboard from ConfigMap %v in grafana: %v", key, err)
 					return
@@ -125,25 +143,6 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 		},
 	})
 
-	return c
-}
+	<-ctx.Done()
 
-func keyOf(cm *v1.ConfigMap) (string, error) {
-	return cache.DeletionHandlingMetaNamespaceKeyFunc(cm)
-}
-
-func asDashboard(cm *v1.ConfigMap) (grafana.Dashboard, error) {
-	data := cm.Data
-	keys := reflect.ValueOf(data).MapKeys()
-	if len(keys) > 0 {
-		firstKeyValue := data[keys[0].String()]
-		return grafana.NewDashboard([]byte(firstKeyValue))
-	}
-	key, _ := keyOf(cm)
-	return grafana.Dashboard{}, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
-
-}
-
-func (c *DashboardsController) Run(ctx context.Context) error {
-	return nil
 }

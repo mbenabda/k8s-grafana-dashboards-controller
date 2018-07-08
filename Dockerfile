@@ -6,7 +6,8 @@ WORKDIR $GOPATH/src/mbenabda.com/k8s-grafana-dashboards-controller
 
 RUN curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh \
     && dep ensure -v \
-    && CGO_ENABLED=0 GOOS=linux go build -a -ldflags "-s -w" -installsuffix nocgo -o /dist/binary . 
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -ldflags "-s -w" -o /dist/binary ./cmd
+
 
 
 FROM scratch
