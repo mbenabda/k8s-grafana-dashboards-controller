@@ -4,6 +4,12 @@ import (
 	"context"
 	"fmt"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/api/v1"
+	"k8s.io/client-go/tools/cache"
+	"time"
+
 	"os"
 
 	"log"
@@ -78,7 +84,8 @@ func main() {
 		Envar("GRAFANA_BASIC_AUTH_PASSWORD").
 		StringVar(&grafanaOptions.Password)
 
-	kingpin.Flag("watch-namespace", "namespace to wath for Configmaps. Defaults to the namespace the controller runs into").
+	kingpin.Flag("watch-namespace", "namespace to wath for Configmaps").
+		Default(v1.NamespaceAll).
 		StringVar(&filterOptions.Namespace)
 
 	selector := SelectorValueHolder(kingpin.
@@ -100,27 +107,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	k8sConfig, err := buildK8sConfig(kubeconfig)
+	restConfig, err := buildK8sConfig(kubeconfig)
 	if err != nil {
 		errorLogger().Printf("could not build kubernetes configuration : %v\n\n", err)
 		kingpin.Usage()
 		os.Exit(1)
 	}
 
-	c := controller.New(
-		grafana.Dashboards(),
-		k8sConfig,
-		filterOptions.Namespace,
-		filterOptions.LabelSelector,
-	)
-
-	err = run(c)
+	err = run(grafana, restConfig, filterOptions)
 	if err != nil {
 		log.Fatalf("Unhandled error received. Exiting... : %v\n\n", err)
 	}
 }
 
-func run(c *controller.DashboardsController) error {
+func run(grafana grafana.Interface, restConfig *rest.Config, filterOptions *FilterOptions) error {
+	clients, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("could not create kubernetes client : %v", err)
+	}
+
 	sig := make(chan os.Signal)
 	defer close(sig)
 
@@ -130,7 +135,30 @@ func run(c *controller.DashboardsController) error {
 	wg, ctx := errgroup.WithContext(ctx)
 	defer cancel()
 
-	wg.Go(func() error { return c.Run(ctx) })
+	configmaps := cache.NewSharedIndexInformer(
+		cache.NewListWatchFromClient(clients.CoreV1().RESTClient(), "configmaps", filterOptions.Namespace, fields.Everything()),
+		&v1.ConfigMap{},
+		1*time.Hour,
+		cache.Indexers{},
+	)
+
+	go func() { configmaps.Run(ctx.Done()) }()
+
+	wg.Go(func() error {
+		if !cache.WaitForCacheSync(ctx.Done(), configmaps.HasSynced) {
+			return fmt.Errorf("unable to sync cache")
+		}
+
+		log.Println("caches have synced, starting controller")
+
+		c := controller.New(
+			grafana.Dashboards(),
+			clients,
+			configmaps,
+			filterOptions.LabelSelector,
+		)
+		return c.Run(ctx)
+	})
 
 	select {
 	case s := <-sig:
@@ -147,20 +175,18 @@ func buildGrafanaClient(opts *GrafanaOptions) (grafana.Interface, error) {
 		return nil, fmt.Errorf("an url is required")
 	}
 
-	if opts.Username != "" || opts.Password != "" {
-		return grafana.NewWithUserCredentials(opts.URL, opts.Username, opts.Password)
+	if opts.Username == "" && opts.Password == "" {
+		return grafana.NewWithApiKey(opts.URL, opts.APIKey)
 	}
 
-	return grafana.NewWithApiKey(opts.URL, opts.APIKey)
+	return grafana.NewWithUserCredentials(opts.URL, opts.Username, opts.Password)
 }
 
 func buildK8sConfig(kubeconfig string) (*rest.Config, error) {
 	if kubeconfig != "" {
-		log.Printf("reading the kubeconfig from %s\n", kubeconfig)
 		return clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
 
-	log.Println("resolving in-cluster configuration")
 	return rest.InClusterConfig()
 }
 

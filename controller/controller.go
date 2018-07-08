@@ -4,107 +4,146 @@ import (
 	"context"
 	"fmt"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/rest"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/api/v1"
+	"k8s.io/client-go/tools/cache"
+	"log"
 	"mbenabda.com/k8s-grafana-dashboards-controller/grafana"
-	"time"
+	"os"
+
+	"reflect"
 )
 
 type DashboardsController struct {
-	dashboards    grafana.DashboardsInterface
-	k8sConfig     *rest.Config
-	namespace     string
-	labelSelector labels.Selector
+	dashboards         grafana.DashboardsInterface
+	clients            kubernetes.Interface
+	configmapsInformer cache.SharedIndexInformer
+	labelSelector      labels.Selector
+	errorLogger        *log.Logger
 }
 
-func New(dashboards grafana.DashboardsInterface, k8sConfig *rest.Config, namespace string, selector labels.Selector) *DashboardsController {
-	return &DashboardsController{
-		dashboards:    dashboards,
-		k8sConfig:     k8sConfig,
-		namespace:     namespace,
-		labelSelector: selector,
+func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer, selector labels.Selector) *DashboardsController {
+	c := &DashboardsController{
+		dashboards:         dashboards,
+		clients:            clients,
+		configmapsInformer: configmaps,
+		labelSelector:      selector,
+		errorLogger:        log.New(os.Stderr, "", 0),
 	}
+
+	configmaps.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			cm := obj.(*v1.ConfigMap)
+
+			key, _ := keyOf(cm)
+
+			dashboard, err := asDashboard(cm)
+			if err != nil {
+				c.errorLogger.Printf("could not parse ConfigMap %v as a Dashboard : %v", key, err)
+				return
+			}
+
+			if err := dashboards.Import(dashboard); err != nil {
+				if err != nil {
+					c.errorLogger.Printf("could not import the Dashboard from ConfigMap %v in grafana: %v", key, err)
+					return
+				}
+			}
+
+			log.Printf("The dashboard defined in ConfigMap %v has been added to Grafana", key)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			oldObjCm := oldObj.(*v1.ConfigMap)
+
+			oldObjKey, _ := keyOf(oldObjCm)
+
+			oldObjDashboard, err := asDashboard(oldObjCm)
+			if err != nil {
+				c.errorLogger.Printf("could not parse ConfigMap %v as a Dashboard : %v", oldObjKey, err)
+				return
+			}
+			oldDashboardSlug, err := oldObjDashboard.Slug()
+			if err != nil {
+				c.errorLogger.Printf("could not build slug of Dashboard defined in ConfigMap %v : %v", oldObjKey, err)
+				return
+			}
+
+			cm := newObj.(*v1.ConfigMap)
+
+			key, _ := keyOf(cm)
+
+			dashboard, err := asDashboard(cm)
+			if err != nil {
+				c.errorLogger.Printf("could not parse ConfigMap %v as a Dashboard : %v", key, err)
+				return
+			}
+
+			slug, err := dashboard.Slug()
+			if err != nil {
+				c.errorLogger.Printf("could not build slug of Dashboard defined in ConfigMap %v : %v", key, err)
+				return
+			}
+
+			err = dashboards.Delete(oldDashboardSlug)
+			if err != nil {
+				c.errorLogger.Printf("could not delete Dashboard %v defined in ConfigMap %v : %v", oldDashboardSlug, oldObjKey, err)
+				return
+			}
+
+			err = dashboards.Import(dashboard)
+			if err != nil {
+				c.errorLogger.Printf("could not import Dashboard defined in ConfigMap %v : %v", key, err)
+				return
+			}
+
+			log.Printf("ConfigMap %s was modified. Dashboard %s updated accordingly", key, slug)
+		},
+		DeleteFunc: func(obj interface{}) {
+			cm := obj.(*v1.ConfigMap)
+
+			key, _ := keyOf(cm)
+
+			dashboard, err := asDashboard(cm)
+			if err != nil {
+				c.errorLogger.Printf("could not parse ConfigMap %v as a Dashboard : %v", key, err)
+				return
+			}
+
+			slug, err := dashboard.Slug()
+			if err != nil {
+				c.errorLogger.Printf("could not build slug of Dashboard defined in ConfigMap %v : %v", key, err)
+				return
+			}
+
+			if err := dashboards.Delete(slug); err != nil {
+				if err != nil {
+					c.errorLogger.Printf("could not delet the Dashboard from ConfigMap %v in grafana: %v", key, err)
+					return
+				}
+			}
+			log.Printf("ConfigMap %s was deleted. Dashboard %s has been removed from Grafana", key, slug)
+		},
+	})
+
+	return c
+}
+
+func keyOf(cm *v1.ConfigMap) (string, error) {
+	return cache.DeletionHandlingMetaNamespaceKeyFunc(cm)
+}
+
+func asDashboard(cm *v1.ConfigMap) (grafana.Dashboard, error) {
+	data := cm.Data
+	keys := reflect.ValueOf(data).MapKeys()
+	if len(keys) > 0 {
+		firstKeyValue := data[keys[0].String()]
+		return grafana.NewDashboard([]byte(firstKeyValue))
+	}
+	key, _ := keyOf(cm)
+	return grafana.Dashboard{}, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
+
 }
 
 func (c *DashboardsController) Run(ctx context.Context) error {
-	fmt.Println("we're running !")
-	select {
-	case <-time.After(time.Second):
-		return fmt.Errorf("fatal error happened while controller working")
-	case <-ctx.Done():
-		return nil
-	}
+	return nil
 }
-
-/*
-
-    @Override
-    public void eventReceived(Action action, ConfigMap configMap) {
-        try {
-            switch (action) {
-                case ADDED: {
-                    JsonNode dashboard = asDashboard(configMap);
-                    grafana.importDashboard(dashboard);
-                    LOGGER.info(format("ConfigMap %s was created. Dashboard %s has been added to Grafana", key(configMap), title(dashboard)));
-                }
-                break;
-
-                case MODIFIED: {
-                    JsonNode dashboard = asDashboard(configMap);
-                    String title = title(dashboard);
-                    String slug = grafana.slug(title);
-                    grafana.deleteDashboard(slug);
-                    grafana.importDashboard(dashboard);
-                    LOGGER.info(format("ConfigMap %s was modified. Dashboard %s updated accordingly", key(configMap), title));
-                }
-                break;
-
-                case DELETED: {
-                    JsonNode dashboard = asDashboard(configMap);
-                    String title = title(dashboard);
-                    String slug = grafana.slug(title);
-                    grafana.deleteDashboard(slug);
-                    LOGGER.info(format("ConfigMap %s was deleted. Dashboard %s removed from Grafana", key(configMap), title));
-                }
-                break;
-            }
-        } catch (GrafanaException | IOException e) {
-            LOGGER.warning(
-                    format("Unable to handle %s event on ConfigMap %s because %s", action, key(configMap), e.getMessage())
-            );
-        }
-    }
-
-    private String key(ConfigMap configMap) {
-        ObjectMeta metadata = configMap.getMetadata();
-
-        return KEY_PARTS_JOINER.join(
-                metadata.getNamespace(),
-                metadata.getName()
-        );
-    }
-
-    @Override
-    public void onClose(KubernetesClientException e) {
-        if (e != null) {
-            LOGGER.log(Level.WARNING, e.getMessage(), e);
-        }
-    }
-
-    private JsonNode asDashboard(ConfigMap configMap) throws IOException {
-        return mapper.readTree(dashboardJson(configMap));
-    }
-
-    private String dashboardJson(ConfigMap configMap) {
-        return valueOfFirstKey(configMap.getData());
-    }
-
-    private static <K, V> V valueOfFirstKey(Map<K, V> data) {
-        return data.entrySet().iterator().next().getValue();
-    }
-
-    private static String title(JsonNode dashboard) {
-        return dashboard.get("dashboard").get("title").asText();
-    }
-}
-
-*/
