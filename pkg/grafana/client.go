@@ -2,6 +2,7 @@ package grafana
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,15 +59,15 @@ func NewWithUserCredentialsAndClient(baseURL *url.URL, client *http.Client, user
 	}, nil
 }
 
-func (c *clientBase) newPostRequest(uri string, body []byte) (*http.Request, error) {
-	return c.newRequest(http.MethodPost, uri, bytes.NewBuffer(body))
+func (c *clientBase) newPostRequest(ctx context.Context, uri string, body []byte) (*http.Request, error) {
+	return c.newRequest(ctx, http.MethodPost, uri, bytes.NewBuffer(body))
 }
 
-func (c *clientBase) newDeleteRequest(uri string) (*http.Request, error) {
-	return c.newRequest(http.MethodDelete, uri, nil)
+func (c *clientBase) newDeleteRequest(ctx context.Context, uri string) (*http.Request, error) {
+	return c.newRequest(ctx, http.MethodDelete, uri, nil)
 }
 
-func (c *clientBase) newRequest(method, uri string, body io.Reader) (*http.Request, error) {
+func (c *clientBase) newRequest(ctx context.Context, method, uri string, body io.Reader) (*http.Request, error) {
 	url := c.baseURL
 	url.Path = path.Join(url.Path, uri)
 	if c.basicAuth != nil {
@@ -84,5 +85,5 @@ func (c *clientBase) newRequest(method, uri string, body io.Reader) (*http.Reque
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	return req, nil
+	return req.WithContext(ctx), nil
 }

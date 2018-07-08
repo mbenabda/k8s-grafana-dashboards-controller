@@ -1,6 +1,7 @@
 package grafana
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path"
@@ -8,18 +9,17 @@ import (
 
 const dashboardsPath = "api/dashboards/db"
 const importPath = "api/dashboards/import"
-const healthPath = "api/health"
 
 type DashboardsClient struct {
 	clientBase
 }
 
-func (c DashboardsClient) Import(dashboard Dashboard) error {
+func (c DashboardsClient) Import(ctx context.Context, dashboard Dashboard) error {
 	data, err := dashboard.marshalJSON()
 	if err != nil {
 		return fmt.Errorf("could not marshal %v: %v", dashboard, err)
 	}
-	_, err = c.newPostRequest(importPath, data)
+	_, err = c.newPostRequest(ctx, importPath, data)
 	if err != nil {
 		return fmt.Errorf("error while importing dashboard: could create request POST %s with body %v : %v", importPath, dashboard, err)
 	}
@@ -43,10 +43,10 @@ func (c DashboardsClient) Import(dashboard Dashboard) error {
 
 	return nil
 }
-func (c DashboardsClient) Delete(slug string) error {
+func (c DashboardsClient) Delete(ctx context.Context, slug string) error {
 	uri := path.Join(dashboardsPath, slug)
 	//req, err := c.newDeleteRequest(uri)
-	_, err := c.newDeleteRequest(uri)
+	_, err := c.newDeleteRequest(ctx, uri)
 	if err != nil {
 		return fmt.Errorf("error while deleting dashboard %s: could create request %s %s : %v", slug, http.MethodDelete, uri, err)
 	}

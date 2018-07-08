@@ -61,7 +61,7 @@ func (c *DashboardsController) Run(ctx context.Context) {
 				return
 			}
 
-			if err := c.dashboards.Import(dashboard); err != nil {
+			if err := c.dashboards.Import(ctx, dashboard); err != nil {
 				if err != nil {
 					c.errorLogger.Printf("could not import the Dashboard from ConfigMap %v in grafana: %v", key, err)
 					return
@@ -102,13 +102,13 @@ func (c *DashboardsController) Run(ctx context.Context) {
 				return
 			}
 
-			err = c.dashboards.Delete(oldDashboardSlug)
+			err = c.dashboards.Delete(ctx, oldDashboardSlug)
 			if err != nil {
 				c.errorLogger.Printf("could not delete Dashboard %v defined in ConfigMap %v : %v", oldDashboardSlug, oldObjKey, err)
 				return
 			}
 
-			err = c.dashboards.Import(dashboard)
+			err = c.dashboards.Import(ctx, dashboard)
 			if err != nil {
 				c.errorLogger.Printf("could not import Dashboard defined in ConfigMap %v : %v", key, err)
 				return
@@ -133,7 +133,7 @@ func (c *DashboardsController) Run(ctx context.Context) {
 				return
 			}
 
-			if err := c.dashboards.Delete(slug); err != nil {
+			if err := c.dashboards.Delete(ctx, slug); err != nil {
 				if err != nil {
 					c.errorLogger.Printf("could not delet the Dashboard from ConfigMap %v in grafana: %v", key, err)
 					return

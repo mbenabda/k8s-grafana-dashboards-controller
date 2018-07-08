@@ -1,12 +1,16 @@
 package grafana
 
+import (
+	"context"
+)
+
 type Interface interface {
 	Dashboards() DashboardsInterface
 }
 
 type DashboardsInterface interface {
-	Import(dashboard Dashboard) error
-	Delete(slug string) error
+	Import(ctx context.Context, dashboard Dashboard) error
+	Delete(ctx context.Context, slug string) error
 }
 
 type GrafanaClient struct {
