@@ -27,24 +27,7 @@ type DashboardsController struct {
 
 const reconcileTask string = "reconcile"
 
-var dryRun ApplyPlanFuncs = ApplyPlanFuncs{
-	CreateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
-		slug, _ := dash.Slug()
-		log.Printf("created dashboard %v\n", slug)
-		return nil
-	},
-	UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
-		slug, _ := dash.Slug()
-		log.Printf("updated dashboard %v\n", slug)
-		return nil
-	},
-	DeleteFunc: func(ctx context.Context, slug string) error {
-		log.Printf("deleted dashboard %v\n", slug)
-		return nil
-	},
-}
-
-func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer, markerTag string) *DashboardsController {
+func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer, markerTag string, dryRun bool) *DashboardsController {
 	c := &DashboardsController{
 		dashboards:  dashboards,
 		clients:     clients,
@@ -57,29 +40,46 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 		),
 	}
 
-	c.applyPlanFuncs = ApplyPlanFuncs{
-		CreateFunc: dashboards.Import,
-		UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
-			slug, err := dash.Slug()
-			if err != nil {
-				return fmt.Errorf("could not get dashboard slug : %v", err)
-			}
+	if dryRun {
+		c.applyPlanFuncs = ApplyPlanFuncs{
+			CreateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+				slug, _ := dash.Slug()
+				log.Printf("created dashboard %v\n", slug)
+				return nil
+			},
+			UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+				slug, _ := dash.Slug()
+				log.Printf("updated dashboard %v\n", slug)
+				return nil
+			},
+			DeleteFunc: func(ctx context.Context, slug string) error {
+				log.Printf("deleted dashboard %v\n", slug)
+				return nil
+			},
+		}
+	} else {
+		c.applyPlanFuncs = ApplyPlanFuncs{
+			CreateFunc: dashboards.Import,
+			UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+				slug, err := dash.Slug()
+				if err != nil {
+					return fmt.Errorf("could not get dashboard slug : %v", err)
+				}
 
-			err = dashboards.Delete(ctx, slug)
-			if err != nil {
-				return fmt.Errorf("could not delete the stale %v dashboard : %v", slug, err)
-			}
+				err = dashboards.Delete(ctx, slug)
+				if err != nil {
+					return fmt.Errorf("could not delete the stale %v dashboard : %v", slug, err)
+				}
 
-			err = dashboards.Import(ctx, dash)
-			if err != nil {
-				return fmt.Errorf("could import the up-to-date %v dashboard : %v", slug, err)
-			}
-			return nil
-		},
-		DeleteFunc: dashboards.Delete,
+				err = dashboards.Import(ctx, dash)
+				if err != nil {
+					return fmt.Errorf("could import the up-to-date %v dashboard : %v", slug, err)
+				}
+				return nil
+			},
+			DeleteFunc: dashboards.Delete,
+		}
 	}
-
-	c.applyPlanFuncs = dryRun
 
 	return c
 }
@@ -151,7 +151,7 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 
 	log.Println("reconciling")
 
-	actualDashboards, err := c.dashboards.Search(ctx, grafana.DashboardSearchQuery{
+	currentDashboards, err := c.dashboards.Search(ctx, grafana.DashboardSearchQuery{
 		Tags: []string{c.markerTag},
 	})
 	if err != nil {
@@ -184,11 +184,14 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 	}
 
 	w := World{
-		Current: actualDashboards,
+		Current: currentDashboards,
 		Desired: desiredDashboards,
 	}
 
-	if w.Plan().Apply(ctx, c.applyPlanFuncs) != nil {
+	err = w.Plan().Apply(ctx, c.applyPlanFuncs)
+	if err == nil {
+		log.Println("reconciliation was successful")
+	} else {
 		c.errorLogger.Printf("failed to apply plan : %v\n", err)
 		c.q.AddRateLimited(taskObj)
 	}

@@ -1,9 +1,8 @@
-Kubernetes controller that watches dashboard configurations defined as configmaps and adds/updates/deletes them to/from grafana
-
+Kubernetes controller that reconciles grafana configuration with dashboards defined as configmaps
 
 - Access to the Kubernetes API is expected to be granted by the local kubeconfig file.
 - You can use equality-based [labelSelector](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#equality-based-requirement)s to select the configmaps to watch for dashboard descriptions.
-- The controller requires access to the Grafana API, either using an `api key` or `basic auth`
+- The controller requires access to the Grafana API, either using an `api key` or `basic auth`. Beware that if using HTTP, credentials will be transmited over the wire without any encryption.
 
 
 Configuration
@@ -15,39 +14,43 @@ Configuration can be specified in 2 ways:
 
 Env Variable | | Description | Default | Example
 --- | --- | --- | --- | ---
-`CONFIGMAP_SELECTOR` | `optional` | kube-api compatible [labelSelector](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors) | `""` | `"role=grafana-dashboard,app=awesome-app"`
-`GRAFANA_API_URL` | `required` | Grafana's api base URL | `null` | `http://grafana.monitoring.svc.cluster.local/api/`
-`GRAFANA_API_KEY` | `required` unless using basic auth | Grafana API Key (get one at `<YOU-GRAFANA-INSTANCE-URL>`/org/apikeys) | `null` | `"eyJrIjoiWlc4VjZaaFlZbWhwdzFiNVlHbXRn....."`
-`GRAFANA_BASIC_AUTH_USERNAME` | `required` if using basic auth | Grafana username | `null` | `"mbenabda"`
-`GRAFANA_BASIC_AUTH_PASSWORD` | `required` if using basic auth | Grafana plain text password | `null` | `"1234"`
-
-Caveat
-=======
-Because grafana API uses title-derived slugs to identify dashboards, and in order not to have to manage state for this controller: 
-once a dashboard is managed, its title must not be changed.
-
-To update a managed dashboard's title: 
-- delete the corresponding configmap from kubernetes
-- change the title in the configmap's dashboard json desciption
-- apply the configmap manifest
-
-
+`DRY_RUN` | `required` | prevents write operations against grafana when specified | `false` | ``
+`CONFIGMAP_SELECTOR` | `optional` | kube-api compatible [labelSelector](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors) | `"" (everything)` | `"role=grafana-dashboard,app=awesome-app"`
+`GRAFANA_URL` | `required` | Grafana's base URL | `""` | `https://grafana/`
+`GRAFANA_API_KEY` | `required` unless using basic auth | Grafana API Key (get one at `<YOUR-GRAFANA-INSTANCE-URL>`/org/apikeys) | `""` | `"eyJrIjoiWlc4VjZaaFlZbWhwdzFiNVlHbXRn....."`
+`GRAFANA_BASIC_AUTH_USERNAME` | `required` if using basic auth | Grafana username | `""` | `"mbenabda"`
+`GRAFANA_BASIC_AUTH_PASSWORD` | if using basic auth | Grafana plain text password | `""` | `"1234"`
+`MARKER_TAG` | `required` | value used to reconize dashboards managed by this instance | `""` | `"1234"`
+`WATCH_NAMESPACE` | `optional` | namespae to watch for configmaps defining dashboards | `"" (all namespaces)` | `"1234"`
 
 Run on Docker
 ======
 ```
+docker build . -t k8s-grafana-dashboards-controller
 docker run \
        -v $HOME/.kube/:/root/.kube:ro \
-       mbenabda/k8s-grafana-dashboards-controller:0.1.1 \
-       --grafana-url http://grafana:3000 \
-       --grafana-user johndoe \
-       --grafana-password s3cr3t \
-       --selector role=grafana-dashboard
+       -v /etc/ssl/certs:/etc/ssl/certs \
+       k8s-grafana-dashboards-controller \
+       --kubeconfig /root/.kube/config \
+       --grafana-url https://grafana:3000 \
+       --grafana-api-key s3cr3t \
+       --selector role=grafana-dashboard \
+       --marker-tag managed \
+       --dry-run
 ```
 
 Run on Kubernetes
 ========
 Take a look at the [example deployment](./examples/k8s-deployment)
+
+
+TODO
+========
+- add tests
+- publish prometheus metrics
+- update kubernetes deployment example
+- setup CI
+- setup [goreleaser](https://github.com/goreleaser/goreleaser)
 
 
 Contributing

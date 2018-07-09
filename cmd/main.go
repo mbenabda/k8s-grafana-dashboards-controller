@@ -67,11 +67,16 @@ func main() {
 	grafanaOptions := &GrafanaOptions{}
 	filterOptions := &FilterOptions{}
 	var kubeconfig string
+	var dryRun bool
 
 	kingpin.CommandLine.Help = "Kubernetes controller that reconciles grafana configuration with dashboards defined as configmaps"
 
+	kingpin.Flag("dry-run", "do not perform write operations against grafana api").
+		Envar("DRY_RUN").
+		BoolVar(&dryRun)
+
 	kingpin.Flag("grafana-url", "url to grafana").
-		Envar("GRAFANA_API_URL").
+		Envar("GRAFANA_URL").
 		Required().
 		URLVar(&grafanaOptions.URL)
 
@@ -83,14 +88,18 @@ func main() {
 		Envar("GRAFANA_BASIC_AUTH_USERNAME").
 		StringVar(&grafanaOptions.Username)
 
-	kingpin.Flag("grafana-password", "grafana User password (Basic Auth). Required unless using an API key").
+	kingpin.Flag("grafana-password", "grafana User password (Basic Auth)").
 		Envar("GRAFANA_BASIC_AUTH_PASSWORD").
 		StringVar(&grafanaOptions.Password)
 
 	kingpin.Flag("marker-tag", "unique tag value to be used as a marker for dashboards managed by this instance of the controller").
+		Envar("MARKER_TAG").
+		PlaceHolder("managed").
+		Required().
 		StringVar(&filterOptions.MarkerTag)
 
-	kingpin.Flag("watch-namespace", "namespace to wath for Configmaps").
+	kingpin.Flag("watch-namespace", "namespace to wath for Configmaps. defaults to all namespaces").
+		Envar("WATCH_NAMESPACE").
 		Default(v1.NamespaceAll).
 		StringVar(&filterOptions.Namespace)
 
@@ -98,9 +107,9 @@ func main() {
 		Flag("selector", "configmap labels selector").
 		Envar("CONFIGMAP_SELECTOR").
 		Default(labels.Everything().String()).
-		PlaceHolder("label1=value1,label2=value2"))
+		PlaceHolder("role=grafana-dashboard"))
 
-	kingpin.Flag("kubeconfig", "path to a kubernetes config file defining a \"current\" context.").
+	kingpin.Flag("kubeconfig", "path to a kubernetes config file defining a \"current\" context. Do not specify when running in cluster").
 		ExistingFileVar(&kubeconfig)
 
 	kingpin.Parse()
@@ -127,10 +136,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	run(grafana, clients, filterOptions)
+	log.Println("[ dry-run =", dryRun, "]", "running against", grafanaOptions.URL, "with", *filterOptions)
+	run(grafana, clients, filterOptions, dryRun)
 }
 
-func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions *FilterOptions) {
+func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions *FilterOptions, dryRun bool) {
 	configmaps := cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
@@ -167,6 +177,7 @@ func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions 
 			clients,
 			configmaps,
 			filterOptions.MarkerTag,
+			dryRun,
 		).Run(ctx)
 		return nil
 	})
