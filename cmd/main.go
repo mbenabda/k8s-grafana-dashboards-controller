@@ -30,6 +30,7 @@ import (
 type FilterOptions struct {
 	Namespace     string
 	LabelSelector labels.Selector
+	MarkerTag     string
 }
 
 type GrafanaOptions struct {
@@ -85,6 +86,9 @@ func main() {
 	kingpin.Flag("grafana-password", "grafana User password (Basic Auth). Required unless using an API key").
 		Envar("GRAFANA_BASIC_AUTH_PASSWORD").
 		StringVar(&grafanaOptions.Password)
+
+	kingpin.Flag("marker-tag", "unique tag value to be used as a marker for dashboards managed by this instance of the controller").
+		StringVar(&filterOptions.MarkerTag)
 
 	kingpin.Flag("watch-namespace", "namespace to wath for Configmaps").
 		Default(v1.NamespaceAll).
@@ -162,6 +166,7 @@ func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions 
 			grafana.Dashboards(),
 			clients,
 			configmaps,
+			filterOptions.MarkerTag,
 		).Run(ctx)
 		return nil
 	})

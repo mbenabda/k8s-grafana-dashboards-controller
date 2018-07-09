@@ -42,11 +42,26 @@ func (j *jsonObj) get(key string) *jsonObj {
 	return &jsonObj{nil}
 }
 
+func (j *jsonObj) set(key string, val interface{}) {
+	m, err := j.asMap()
+	if err != nil {
+		return
+	}
+	m[key] = val
+}
+
 func (j *jsonObj) asMap() (map[string]interface{}, error) {
 	if m, ok := (j.data).(map[string]interface{}); ok {
 		return m, nil
 	}
 	return nil, errors.New("type assertion to map[string]interface{} failed")
+}
+
+func (j *jsonObj) asArray() ([]interface{}, error) {
+	if a, ok := (j.data).([]interface{}); ok {
+		return a, nil
+	}
+	return nil, errors.New("type assertion to []interface{} failed")
 }
 
 func (j *jsonObj) String() (string, error) {
