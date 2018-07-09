@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"log"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 )
 
@@ -12,7 +11,7 @@ type World struct {
 }
 
 type Plan struct {
-	changes []change
+	Changes []change
 }
 
 type ApplyPlanFuncs struct {
@@ -35,7 +34,7 @@ type deleteAction struct {
 	slug string
 }
 
-func (world *World) Plan() Plan {
+func (world *World) PlanChanges() Plan {
 	plan := map[string]change{}
 
 	currentSlugs := map[string]bool{}
@@ -74,13 +73,11 @@ func (world *World) Plan() Plan {
 		changes = append(changes, v)
 	}
 
-	log.Println(len(changes), "changes planned")
-
-	return Plan{changes: changes}
+	return Plan{Changes: changes}
 }
 
 func (this Plan) Apply(ctx context.Context, funcs ApplyPlanFuncs) error {
-	for _, change := range this.changes {
+	for _, change := range this.Changes {
 		err := change.apply(ctx, funcs)
 		if err != nil {
 			return err

@@ -84,28 +84,22 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 	return c
 }
 
-func keyOf(cm *v1.ConfigMap) (string, error) {
-	return cache.DeletionHandlingMetaNamespaceKeyFunc(cm)
-}
-
-func asDashboard(cm *v1.ConfigMap) (*grafana.Dashboard, error) {
-	data := cm.Data
-	keys := reflect.ValueOf(data).MapKeys()
-	if len(keys) > 0 {
-		firstKeyValue := data[keys[0].String()]
-		return grafana.NewDashboard([]byte(firstKeyValue))
-	}
-	key, _ := keyOf(cm)
-	return nil, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
-
-}
-
 func (c *DashboardsController) Run(ctx context.Context) {
 	if !cache.WaitForCacheSync(ctx.Done(), c.configmaps.HasSynced) {
 		return
 	}
 
-	go func() { c.runWorker(ctx) }()
+	go func() {
+		t := time.NewTicker(60 * time.Second)
+		for c.processWorkItem(ctx) {
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				c.q.ShutDown()
+				return
+			}
+		}
+	}()
 
 	c.configmaps.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
@@ -121,18 +115,6 @@ func (c *DashboardsController) Run(ctx context.Context) {
 	})
 
 	<-ctx.Done()
-}
-
-func (c *DashboardsController) runWorker(ctx context.Context) {
-	t := time.NewTicker(60 * time.Second)
-	for c.processWorkItem(ctx) {
-		select {
-		case <-t.C:
-		case <-ctx.Done():
-			c.q.ShutDown()
-			return
-		}
-	}
 }
 
 func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
@@ -151,50 +133,76 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 
 	log.Println("reconciling")
 
-	currentDashboards, err := c.dashboards.Search(ctx, grafana.DashboardSearchQuery{
-		Tags: []string{c.markerTag},
-	})
+	w, err := buildWorldView(ctx, c.errorLogger, c.dashboards, c.configmaps, c.markerTag)
 	if err != nil {
-		c.errorLogger.Printf("could not search for dashboards with marker tag %v : %v\n", c.markerTag, err)
+		c.errorLogger.Printf("failed to build world view : %v\n", err)
 		c.q.AddRateLimited(taskObj)
 		return true
 	}
 
+	plan := w.PlanChanges()
+
+	log.Println(len(plan.Changes), "changes planned")
+
+	if err = plan.Apply(ctx, c.applyPlanFuncs); err != nil {
+		c.errorLogger.Printf("failed to apply plan : %v\n", err)
+		c.q.AddRateLimited(taskObj)
+	} else {
+		log.Println("reconciliation was successful")
+	}
+
+	return true
+}
+
+func buildWorldView(ctx context.Context, errorLogger *log.Logger, dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string) (*World, error) {
+	currentDashboards, err := dashboards.Search(ctx, grafana.DashboardSearchQuery{
+		Tags: []string{markerTag},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not search for dashboards with marker tag %v : %v", markerTag, err)
+	}
+
 	desiredDashboards := []*grafana.Dashboard{}
-	for _, cmObj := range c.configmaps.GetStore().List() {
+	for _, cmObj := range configmaps.GetStore().List() {
 		cm := cmObj.(*v1.ConfigMap)
 		key, err := keyOf(cm)
 		if err != nil {
-			c.errorLogger.Printf("failed get key of ConfigMap %v: %v\n", cm, err)
+			errorLogger.Printf("failed get key of ConfigMap %v: %v\n", cm, err)
 			continue
 		}
 
 		desiredDashboard, err := asDashboard(cm)
 		if err != nil {
-			c.errorLogger.Printf("could not make a Dashboard out of ConfigMap %v: %v\n", key, err)
+			errorLogger.Printf("could not make a Dashboard out of ConfigMap %v: %v\n", key, err)
 			continue
 		}
 
-		if desiredDashboard.AddTag(c.markerTag) != nil {
-			c.errorLogger.Printf("could not add marker tag to Dashboard of ConfigMap %v: %v\n", key, err)
+		if err = desiredDashboard.AddTag(markerTag); err != nil {
+			errorLogger.Printf("could not add marker tag to Dashboard of ConfigMap %v: %v\n", key, err)
 			continue
 		}
 
 		desiredDashboards = append(desiredDashboards, desiredDashboard)
 	}
 
-	w := World{
+	return &World{
 		Current: currentDashboards,
 		Desired: desiredDashboards,
-	}
+	}, nil
+}
 
-	err = w.Plan().Apply(ctx, c.applyPlanFuncs)
-	if err == nil {
-		log.Println("reconciliation was successful")
-	} else {
-		c.errorLogger.Printf("failed to apply plan : %v\n", err)
-		c.q.AddRateLimited(taskObj)
-	}
+func keyOf(cm *v1.ConfigMap) (string, error) {
+	return cache.DeletionHandlingMetaNamespaceKeyFunc(cm)
+}
 
-	return true
+func asDashboard(cm *v1.ConfigMap) (*grafana.Dashboard, error) {
+	data := cm.Data
+	keys := reflect.ValueOf(data).MapKeys()
+	if len(keys) > 0 {
+		firstKeyValue := data[keys[0].String()]
+		return grafana.NewDashboard([]byte(firstKeyValue))
+	}
+	key, _ := keyOf(cm)
+	return nil, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
+
 }
