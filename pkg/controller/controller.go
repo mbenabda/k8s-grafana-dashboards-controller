@@ -10,24 +10,42 @@ import (
 	"log"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 	"os"
-	"time"
-
 	"reflect"
+	"strings"
+	"time"
 )
 
 type DashboardsController struct {
-	dashboards  grafana.DashboardsInterface
-	clients     kubernetes.Interface
-	configmaps  cache.SharedIndexInformer
-	errorLogger *log.Logger
-	markerTag   string
-	q           workqueue.RateLimitingInterface
+	dashboards     grafana.DashboardsInterface
+	clients        kubernetes.Interface
+	configmaps     cache.SharedIndexInformer
+	errorLogger    *log.Logger
+	markerTag      string
+	q              workqueue.RateLimitingInterface
+	applyPlanFuncs ApplyPlanFuncs
 }
 
 const reconcileTask string = "reconcile"
 
+var dryRun ApplyPlanFuncs = ApplyPlanFuncs{
+	CreateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+		slug, _ := dash.Slug()
+		log.Printf("created dashboard %v\n", slug)
+		return nil
+	},
+	UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+		slug, _ := dash.Slug()
+		log.Printf("updated dashboard %v\n", slug)
+		return nil
+	},
+	DeleteFunc: func(ctx context.Context, slug string) error {
+		log.Printf("deleted dashboard %v\n", slug)
+		return nil
+	},
+}
+
 func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer, markerTag string) *DashboardsController {
-	return &DashboardsController{
+	c := &DashboardsController{
 		dashboards:  dashboards,
 		clients:     clients,
 		configmaps:  configmaps,
@@ -35,26 +53,50 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 		markerTag:   markerTag,
 		q: workqueue.NewNamedRateLimitingQueue(
 			workqueue.DefaultControllerRateLimiter(),
-			markerTag+"-grafana-dashboards",
+			strings.Join([]string{markerTag, "grafana-dashboards"}, "-"),
 		),
 	}
+
+	c.applyPlanFuncs = ApplyPlanFuncs{
+		CreateFunc: dashboards.Import,
+		UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+			slug, err := dash.Slug()
+			if err != nil {
+				return fmt.Errorf("could not get dashboard slug : %v", err)
+			}
+
+			err = dashboards.Delete(ctx, slug)
+			if err != nil {
+				return fmt.Errorf("could not delete the stale %v dashboard : %v", slug, err)
+			}
+
+			err = dashboards.Import(ctx, dash)
+			if err != nil {
+				return fmt.Errorf("could import the up-to-date %v dashboard : %v", slug, err)
+			}
+			return nil
+		},
+		DeleteFunc: dashboards.Delete,
+	}
+
+	c.applyPlanFuncs = dryRun
+
+	return c
 }
 
 func keyOf(cm *v1.ConfigMap) (string, error) {
 	return cache.DeletionHandlingMetaNamespaceKeyFunc(cm)
 }
 
-func (c *DashboardsController) asDashboard(cm *v1.ConfigMap) (grafana.Dashboard, error) {
+func asDashboard(cm *v1.ConfigMap) (*grafana.Dashboard, error) {
 	data := cm.Data
 	keys := reflect.ValueOf(data).MapKeys()
 	if len(keys) > 0 {
 		firstKeyValue := data[keys[0].String()]
-		dashboard, err := grafana.NewDashboard([]byte(firstKeyValue))
-		dashboard.AddTag(c.markerTag)
-		return dashboard, err
+		return grafana.NewDashboard([]byte(firstKeyValue))
 	}
 	key, _ := keyOf(cm)
-	return grafana.Dashboard{}, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
+	return nil, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
 
 }
 
@@ -82,70 +124,74 @@ func (c *DashboardsController) Run(ctx context.Context) {
 }
 
 func (c *DashboardsController) runWorker(ctx context.Context) {
-	t := time.NewTicker(30 * time.Second)
+	t := time.NewTicker(60 * time.Second)
 	for c.processWorkItem(ctx) {
 		select {
 		case <-t.C:
 		case <-ctx.Done():
-			break
+			c.q.ShutDown()
+			return
 		}
 	}
-	c.q.ShutDown()
 }
 
 func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
-	keyObj, _ /* shutdown */ := c.q.Get()
-	defer c.q.Done(keyObj)
+	taskObj, shutdown := c.q.Get()
+	defer c.q.Done(taskObj)
 
-	c.reconcile(ctx)
+	if shutdown {
+		log.Println("Shutting down the work queue")
+		return false
+	}
 
-	return true
-}
+	if taskObj.(string) != reconcileTask {
+		c.q.Forget(taskObj)
+		return true
+	}
 
-func (c *DashboardsController) reconcile(ctx context.Context) {
 	log.Println("reconciling")
 
-	results, err := c.dashboards.Search(ctx, grafana.DashboardSearchQuery{
+	actualDashboards, err := c.dashboards.Search(ctx, grafana.DashboardSearchQuery{
 		Tags: []string{c.markerTag},
 	})
-
 	if err != nil {
-		c.errorLogger.Printf("could not search for dashboards with market tag %v : %v\n", c.markerTag, err)
-		return
+		c.errorLogger.Printf("could not search for dashboards with marker tag %v : %v\n", c.markerTag, err)
+		c.q.AddRateLimited(taskObj)
+		return true
 	}
 
-	log.Printf("found %v dashboards with the marker tag", len(results))
-}
-
-func (c *DashboardsController) createDashboard(ctx context.Context, cm *v1.ConfigMap) error {
-	dashboard, err := c.asDashboard(cm)
-	if err != nil {
-		return fmt.Errorf("could not parse ConfigMap as a Dashboard : %v", err)
-	}
-
-	if err := c.dashboards.Import(ctx, dashboard); err != nil {
+	desiredDashboards := []*grafana.Dashboard{}
+	for _, cmObj := range c.configmaps.GetStore().List() {
+		cm := cmObj.(*v1.ConfigMap)
+		key, err := keyOf(cm)
 		if err != nil {
-			return err
+			c.errorLogger.Printf("failed get key of ConfigMap %v: %v\n", cm, err)
+			continue
 		}
-	}
-	return nil
-}
 
-func (c *DashboardsController) deleteDashboard(ctx context.Context, cm *v1.ConfigMap) error {
-	dashboard, err := c.asDashboard(cm)
-	if err != nil {
-		return fmt.Errorf("could not parse ConfigMap as a Dashboard : %v", err)
-	}
-
-	slug, err := dashboard.Slug()
-	if err != nil {
-		return fmt.Errorf("could not build slug of Dashboard defined in ConfigMap : %v", err)
-	}
-
-	if err := c.dashboards.Delete(ctx, slug); err != nil {
+		desiredDashboard, err := asDashboard(cm)
 		if err != nil {
-			return err
+			c.errorLogger.Printf("could not make a Dashboard out of ConfigMap %v: %v\n", key, err)
+			continue
 		}
+
+		if desiredDashboard.AddTag(c.markerTag) != nil {
+			c.errorLogger.Printf("could not add marker tag to Dashboard of ConfigMap %v: %v\n", key, err)
+			continue
+		}
+
+		desiredDashboards = append(desiredDashboards, desiredDashboard)
 	}
-	return nil
+
+	w := World{
+		Current: actualDashboards,
+		Desired: desiredDashboards,
+	}
+
+	if w.Plan().Apply(ctx, c.applyPlanFuncs) != nil {
+		c.errorLogger.Printf("failed to apply plan : %v\n", err)
+		c.q.AddRateLimited(taskObj)
+	}
+
+	return true
 }

@@ -16,8 +16,8 @@ type DashboardsClient struct {
 	clientBase
 }
 
-func (c DashboardsClient) Import(ctx context.Context, dashboard Dashboard) error {
-	data, err := dashboard.marshalJSON()
+func (c DashboardsClient) Import(ctx context.Context, dashboard *Dashboard) error {
+	data, err := dashboard.data.marshalJSON()
 	if err != nil {
 		return fmt.Errorf("could not marshal %v: %v", dashboard, err)
 	}
@@ -68,7 +68,7 @@ func (c DashboardsClient) Delete(ctx context.Context, slug string) error {
 	return nil
 }
 
-func (c DashboardsClient) Search(ctx context.Context, query DashboardSearchQuery) ([]DashboardResult, error) {
+func (c DashboardsClient) Search(ctx context.Context, query DashboardSearchQuery) ([]*DashboardResult, error) {
 	req, err := c.newGetRequest(ctx, searchPath, url.Values{
 		"tag": query.Tags,
 	})

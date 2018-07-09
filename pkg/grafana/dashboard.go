@@ -5,19 +5,23 @@ import (
 	"strings"
 )
 
-type Dashboard = jsonObj
-type DashboardResult = jsonObj
-
-func NewDashboard(body []byte) (Dashboard, error) {
-	j, err := newJsonObj(body)
-	if err != nil {
-		return Dashboard{}, err
-	}
-
-	return Dashboard(*j), nil
+type Dashboard struct {
+	data jsonObj
+}
+type DashboardResult struct {
+	data jsonObj
 }
 
-func newDashboardSearchResults(body []byte) ([]DashboardResult, error) {
+func NewDashboard(body []byte) (*Dashboard, error) {
+	j, err := newJsonObj(body)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Dashboard{data: *j}, nil
+}
+
+func newDashboardSearchResults(body []byte) ([]*DashboardResult, error) {
 	j, err := newJsonObj(body)
 	if err != nil {
 		return nil, err
@@ -27,17 +31,17 @@ func newDashboardSearchResults(body []byte) ([]DashboardResult, error) {
 		return nil, err
 	}
 
-	dashboards := []DashboardResult{}
+	dashboards := []*DashboardResult{}
 
 	for _, d := range arr {
-		dashboards = append(dashboards, DashboardResult(jsonObj{d}))
+		dashboards = append(dashboards, &DashboardResult{data: jsonObj{d}})
 	}
 
 	return dashboards, nil
 }
 
 func (d Dashboard) Title() (string, error) {
-	return d.get("dashboard").get("title").String()
+	return d.data.get("dashboard").get("title").String()
 }
 
 func (d Dashboard) Slug() (string, error) {
@@ -48,21 +52,30 @@ func (d Dashboard) Slug() (string, error) {
 	return slug.Make(strings.ToLower(title)), nil
 }
 
+func (d DashboardResult) Slug() (string, error) {
+	uri, err := d.data.get("uri").String()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(uri, "db/"), nil
+}
+
 func (d Dashboard) AddTag(tag string) error {
-	tagsObj, err := d.get("dashboard").get("tags").asArray()
+	tagsObj, err := d.data.get("dashboard").get("tags").asArray()
 	if err != nil {
 		return err
 	}
 	alreadyHasTag := false
-	tags := make([]string, len(tagsObj)+1)
+	tags := []string{}
 	for _, t := range tagsObj {
 		tagStr := t.(string)
 		alreadyHasTag = alreadyHasTag || (tagStr == tag)
 		tags = append(tags, tagStr)
 	}
+
 	if !alreadyHasTag {
 		tags = append(tags, tag)
-		d.get("dashboard").set("tags", tags)
+		d.data.get("dashboard").set("tags", tags)
 	}
 
 	return nil

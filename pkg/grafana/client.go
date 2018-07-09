@@ -70,7 +70,11 @@ func (c *clientBase) newGetRequest(ctx context.Context, uri string, params url.V
 }
 
 func (c *clientBase) newRequest(ctx context.Context, method, uri string, params url.Values, body io.Reader) (*http.Request, error) {
-	url := c.baseURL
+	url, err := url.Parse(c.baseURL.String())
+	if err != nil {
+		return nil, fmt.Errorf("parse url %v: %v", c.baseURL.String(), err)
+	}
+
 	url.Path = path.Join(url.Path, uri)
 	if params != nil {
 		url.RawQuery = params.Encode()
