@@ -135,7 +135,7 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 		c.errorLogger.Printf("failed to apply plan : %v\n", err)
 		c.q.AddRateLimited(taskObj)
 	} else {
-		log.Println("reconciler was successful")
+		log.Println("reconciliation was successful")
 	}
 
 	return true

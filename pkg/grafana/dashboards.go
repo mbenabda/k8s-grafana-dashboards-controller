@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"net/url"
 	"path"
 )
@@ -19,30 +20,23 @@ type DashboardsClient struct {
 func (c DashboardsClient) Import(ctx context.Context, dashboard *Dashboard) error {
 	data, err := dashboard.data.marshalJSON()
 	if err != nil {
-		return fmt.Errorf("could not marshal %v: %v", dashboard, err)
+		return fmt.Errorf("could not marshal dashboard: %v", err)
 	}
-	_, err = c.newPostRequest(ctx, importPath, data)
+
+	req, err := c.newPostRequest(ctx, importPath, data)
 	if err != nil {
-		slug, _ := dashboard.Slug()
-		return fmt.Errorf("error while importing dashboard: %v", slug, err)
+		return fmt.Errorf("could create import request : %v", err)
 	}
 
-	/*
-		req, err := c.newPostRequest(importPath, data)
-		if err != nil {
-			return fmt.Errorf("error while importing dashboard: could create request POST %s with body %v : %v", importPath, dashboard, err)
-		}
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not import dashboard: %v", err)
+	}
 
-		res, err := c.httpClient.Do(req)
-
-		if err != nil {
-			return fmt.Errorf("error while importing dashboard %v: %v", dashboard, err)
-		}
-
-		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			return fmt.Errorf("error while importing dashboard (%s) %v: %v", res.Status, dashboard, err)
-		}
-	*/
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		errBody := readErrorBodyAsString(res)
+		return fmt.Errorf("bad response '%v'. could not import dashboard: %v", res.Status, errBody)
+	}
 
 	return nil
 }
@@ -54,22 +48,21 @@ func (c DashboardsClient) ImportAndOverwrite(ctx context.Context, dashboard *Das
 
 func (c DashboardsClient) Delete(ctx context.Context, slug string) error {
 	uri := path.Join(dashboardsPath, slug)
-	_, err := c.newDeleteRequest(ctx, uri)
+	req, err := c.newDeleteRequest(ctx, uri)
 	if err != nil {
-		return fmt.Errorf("error while deleting dashboard %s: %v", slug, err)
+		return fmt.Errorf("could not create delete request for dashboard %s: %v", slug, err)
 	}
 
-	/*
-		res, err := c.httpClient.Do(req)
+	res, err := c.httpClient.Do(req)
 
-		if err != nil {
-			return fmt.Errorf("error while deleting dashboard %s: %v", slug, err)
-		}
+	if err != nil {
+		return fmt.Errorf("could not delete dashboard %s: %v", slug, err)
+	}
 
-		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			return fmt.Errorf("error while deleting dashboard (%s) %s: %v", res.Status, slug, err)
-		}
-	*/
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		errBody := readErrorBodyAsString(res)
+		return fmt.Errorf("bad response '%v'. could not delete dashboard %s: %v", res.Status, slug, errBody)
+	}
 
 	return nil
 }
@@ -85,17 +78,12 @@ func (c DashboardsClient) Search(ctx context.Context, query DashboardSearchQuery
 	res, err := c.httpClient.Do(req)
 
 	if err != nil {
-		return nil, fmt.Errorf("error while performing dashboard search request with query %v: %v", query, err)
+		return nil, fmt.Errorf("could not search for dashboards with query %v: %v", query, err)
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		errBody := ""
-		if res.Body != nil {
-			defer res.Body.Close()
-			bodyBytes, _ := ioutil.ReadAll(res.Body)
-			errBody = string(bodyBytes)
-		}
-		return nil, fmt.Errorf("error while searching for dashboard with query %v : %v %v", query, res.Status, errBody)
+		errBody := readErrorBodyAsString(res)
+		return nil, fmt.Errorf("bad response '%v'. could not search for dashboards with query %v : %v", res.Status, query, errBody)
 	}
 
 	defer res.Body.Close()
@@ -106,4 +94,13 @@ func (c DashboardsClient) Search(ctx context.Context, query DashboardSearchQuery
 	}
 
 	return newDashboardSearchResults(bodyBytes)
+}
+
+func readErrorBodyAsString(res *http.Response) string {
+	if res != nil && res.Body != nil {
+		defer res.Body.Close()
+		bodyBytes, _ := ioutil.ReadAll(res.Body)
+		return string(bodyBytes)
+	}
+	return ""
 }
