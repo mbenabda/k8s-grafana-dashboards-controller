@@ -6,13 +6,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
 	"log"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/differ"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 	"os"
 	"reflect"
-	"strings"
 	"time"
 )
 
@@ -22,7 +20,6 @@ type DashboardsController struct {
 	configmaps  cache.SharedIndexInformer
 	errorLogger *log.Logger
 	markerTag   string
-	q           workqueue.RateLimitingInterface
 	reconciler  differ.Interface
 }
 
@@ -67,11 +64,7 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 		configmaps:  configmaps,
 		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
 		markerTag:   markerTag,
-		q: workqueue.NewNamedRateLimitingQueue(
-			workqueue.DefaultControllerRateLimiter(),
-			strings.Join([]string{markerTag, "grafana-dashboards"}, "-"),
-		),
-		reconciler: reconciler,
+		reconciler:  reconciler,
 	}
 }
 
@@ -86,54 +79,25 @@ func (c *DashboardsController) Run(ctx context.Context) {
 			select {
 			case <-t.C:
 			case <-ctx.Done():
-				c.q.ShutDown()
 				return
 			}
 		}
 	}()
 
-	c.configmaps.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			c.q.Add(reconcileTask)
-		},
-
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			c.q.Add(reconcileTask)
-		},
-		DeleteFunc: func(obj interface{}) {
-			c.q.Add(reconcileTask)
-		},
-	})
-
 	<-ctx.Done()
 }
 
 func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
-	taskObj, shutdown := c.q.Get()
-	defer c.q.Done(taskObj)
-
-	if shutdown {
-		log.Println("Shutting down the work queue")
-		return false
-	}
-
-	if taskObj.(string) != reconcileTask {
-		c.q.Forget(taskObj)
-		return true
-	}
-
 	log.Println("reconciling")
 
 	desiredDashboards, err := listDesiredDashboards(ctx, c.errorLogger, c.dashboards, c.configmaps, c.markerTag)
 	if err != nil {
 		c.errorLogger.Printf("failed to list dashboards declared in the ConfigMaps: %v\n", err)
-		c.q.AddRateLimited(taskObj)
 		return true
 	}
 
 	if err = c.reconciler.Apply(ctx, desiredDashboards); err != nil {
 		c.errorLogger.Printf("failed to apply plan : %v\n", err)
-		c.q.AddRateLimited(taskObj)
 	} else {
 		log.Println("reconciliation was successful")
 	}
