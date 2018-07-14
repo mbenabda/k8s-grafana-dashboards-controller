@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/cache"
 	"log"
@@ -16,7 +15,6 @@ import (
 
 type DashboardsController struct {
 	dashboards  grafana.DashboardsInterface
-	clients     kubernetes.Interface
 	configmaps  cache.SharedIndexInformer
 	errorLogger *log.Logger
 	markerTag   string
@@ -25,7 +23,7 @@ type DashboardsController struct {
 
 const reconcileTask string = "reconcile"
 
-func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer, markerTag string, dryRun bool) *DashboardsController {
+func New(dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string, dryRun bool) *DashboardsController {
 	var reconciler differ.Interface
 	if dryRun {
 		reconciler = differ.NewFuncsBased(differ.Funcs{
@@ -60,7 +58,6 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 
 	return &DashboardsController{
 		dashboards:  dashboards,
-		clients:     clients,
 		configmaps:  configmaps,
 		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
 		markerTag:   markerTag,

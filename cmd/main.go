@@ -174,7 +174,6 @@ func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions 
 	wg.Go(func() error {
 		controller.New(
 			grafana.Dashboards(),
-			clients,
 			configmaps,
 			filterOptions.MarkerTag,
 			dryRun,
