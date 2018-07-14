@@ -46,6 +46,12 @@ func (c DashboardsClient) Import(ctx context.Context, dashboard *Dashboard) erro
 
 	return nil
 }
+
+func (c DashboardsClient) ImportAndOverwrite(ctx context.Context, dashboard *Dashboard) error {
+	dashboard.data.set("overwrite", true)
+	return c.Import(ctx, dashboard)
+}
+
 func (c DashboardsClient) Delete(ctx context.Context, slug string) error {
 	uri := path.Join(dashboardsPath, slug)
 	_, err := c.newDeleteRequest(ctx, uri)

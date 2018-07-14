@@ -56,23 +56,7 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 				return findMarkedDashboards(ctx, dashboards, markerTag)
 			},
 			Create: dashboards.Import,
-			Update: func(ctx context.Context, dash *grafana.Dashboard) error {
-				slug, err := dash.Slug()
-				if err != nil {
-					return fmt.Errorf("could not get dashboard slug : %v", err)
-				}
-
-				err = dashboards.Delete(ctx, slug)
-				if err != nil {
-					return fmt.Errorf("could not delete the stale %v dashboard : %v", slug, err)
-				}
-
-				err = dashboards.Import(ctx, dash)
-				if err != nil {
-					return fmt.Errorf("could import the up-to-date %v dashboard : %v", slug, err)
-				}
-				return nil
-			},
+			Update: dashboards.ImportAndOverwrite,
 			Delete: dashboards.Delete,
 		})
 	}
