@@ -8,6 +8,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"log"
+	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/differ"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 	"os"
 	"reflect"
@@ -16,51 +17,46 @@ import (
 )
 
 type DashboardsController struct {
-	dashboards     grafana.DashboardsInterface
-	clients        kubernetes.Interface
-	configmaps     cache.SharedIndexInformer
-	errorLogger    *log.Logger
-	markerTag      string
-	q              workqueue.RateLimitingInterface
-	applyPlanFuncs ApplyPlanFuncs
+	dashboards  grafana.DashboardsInterface
+	clients     kubernetes.Interface
+	configmaps  cache.SharedIndexInformer
+	errorLogger *log.Logger
+	markerTag   string
+	q           workqueue.RateLimitingInterface
+	reconciler  differ.Interface
 }
 
 const reconcileTask string = "reconcile"
 
 func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, configmaps cache.SharedIndexInformer, markerTag string, dryRun bool) *DashboardsController {
-	c := &DashboardsController{
-		dashboards:  dashboards,
-		clients:     clients,
-		configmaps:  configmaps,
-		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
-		markerTag:   markerTag,
-		q: workqueue.NewNamedRateLimitingQueue(
-			workqueue.DefaultControllerRateLimiter(),
-			strings.Join([]string{markerTag, "grafana-dashboards"}, "-"),
-		),
-	}
-
+	var reconciler differ.Interface
 	if dryRun {
-		c.applyPlanFuncs = ApplyPlanFuncs{
-			CreateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+		reconciler = differ.NewFuncsBased(differ.Funcs{
+			ListDashboards: func(ctx context.Context) ([]*grafana.DashboardResult, error) {
+				return findMarkedDashboards(ctx, dashboards, markerTag)
+			},
+			Create: func(ctx context.Context, dash *grafana.Dashboard) error {
 				slug, _ := dash.Slug()
 				log.Printf("created dashboard %v\n", slug)
 				return nil
 			},
-			UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+			Update: func(ctx context.Context, dash *grafana.Dashboard) error {
 				slug, _ := dash.Slug()
 				log.Printf("updated dashboard %v\n", slug)
 				return nil
 			},
-			DeleteFunc: func(ctx context.Context, slug string) error {
+			Delete: func(ctx context.Context, slug string) error {
 				log.Printf("deleted dashboard %v\n", slug)
 				return nil
 			},
-		}
+		})
 	} else {
-		c.applyPlanFuncs = ApplyPlanFuncs{
-			CreateFunc: dashboards.Import,
-			UpdateFunc: func(ctx context.Context, dash *grafana.Dashboard) error {
+		reconciler = differ.NewFuncsBased(differ.Funcs{
+			ListDashboards: func(ctx context.Context) ([]*grafana.DashboardResult, error) {
+				return findMarkedDashboards(ctx, dashboards, markerTag)
+			},
+			Create: dashboards.Import,
+			Update: func(ctx context.Context, dash *grafana.Dashboard) error {
 				slug, err := dash.Slug()
 				if err != nil {
 					return fmt.Errorf("could not get dashboard slug : %v", err)
@@ -77,11 +73,22 @@ func New(dashboards grafana.DashboardsInterface, clients kubernetes.Interface, c
 				}
 				return nil
 			},
-			DeleteFunc: dashboards.Delete,
-		}
+			Delete: dashboards.Delete,
+		})
 	}
 
-	return c
+	return &DashboardsController{
+		dashboards:  dashboards,
+		clients:     clients,
+		configmaps:  configmaps,
+		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
+		markerTag:   markerTag,
+		q: workqueue.NewNamedRateLimitingQueue(
+			workqueue.DefaultControllerRateLimiter(),
+			strings.Join([]string{markerTag, "grafana-dashboards"}, "-"),
+		),
+		reconciler: reconciler,
+	}
 }
 
 func (c *DashboardsController) Run(ctx context.Context) {
@@ -133,35 +140,30 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 
 	log.Println("reconciling")
 
-	w, err := buildWorldView(ctx, c.errorLogger, c.dashboards, c.configmaps, c.markerTag)
+	desiredDashboards, err := listDesiredDashboards(ctx, c.errorLogger, c.dashboards, c.configmaps, c.markerTag)
 	if err != nil {
-		c.errorLogger.Printf("failed to build world view : %v\n", err)
+		c.errorLogger.Printf("failed to list dashboards declared in the ConfigMaps: %v\n", err)
 		c.q.AddRateLimited(taskObj)
 		return true
 	}
 
-	plan := w.PlanChanges()
-
-	log.Println(len(plan.Changes), "changes planned")
-
-	if err = plan.Apply(ctx, c.applyPlanFuncs); err != nil {
+	if err = c.reconciler.Apply(ctx, desiredDashboards); err != nil {
 		c.errorLogger.Printf("failed to apply plan : %v\n", err)
 		c.q.AddRateLimited(taskObj)
 	} else {
-		log.Println("reconciliation was successful")
+		log.Println("reconciler was successful")
 	}
 
 	return true
 }
 
-func buildWorldView(ctx context.Context, errorLogger *log.Logger, dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string) (*World, error) {
-	currentDashboards, err := dashboards.Search(ctx, grafana.DashboardSearchQuery{
+func findMarkedDashboards(ctx context.Context, dashboards grafana.DashboardsInterface, markerTag string) ([]*grafana.DashboardResult, error) {
+	return dashboards.Search(ctx, grafana.DashboardSearchQuery{
 		Tags: []string{markerTag},
 	})
-	if err != nil {
-		return nil, fmt.Errorf("could not search for dashboards with marker tag %v : %v", markerTag, err)
-	}
+}
 
+func listDesiredDashboards(ctx context.Context, errorLogger *log.Logger, dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string) ([]*grafana.Dashboard, error) {
 	desiredDashboards := []*grafana.Dashboard{}
 	for _, cmObj := range configmaps.GetStore().List() {
 		cm := cmObj.(*v1.ConfigMap)
@@ -185,10 +187,7 @@ func buildWorldView(ctx context.Context, errorLogger *log.Logger, dashboards gra
 		desiredDashboards = append(desiredDashboards, desiredDashboard)
 	}
 
-	return &World{
-		Current: currentDashboards,
-		Desired: desiredDashboards,
-	}, nil
+	return desiredDashboards, nil
 }
 
 func keyOf(cm *v1.ConfigMap) (string, error) {
@@ -204,5 +203,4 @@ func asDashboard(cm *v1.ConfigMap) (*grafana.Dashboard, error) {
 	}
 	key, _ := keyOf(cm)
 	return nil, fmt.Errorf("could not get first Data key of ConfigMap %v", key)
-
 }

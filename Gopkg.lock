@@ -208,12 +208,6 @@
 
 [[projects]]
   branch = "master"
-  name = "github.com/moul/http2curl"
-  packages = ["."]
-  revision = "9ac6cf4d929b2fa8fd2d2e6dec5bb0feb4f4911d"
-
-[[projects]]
-  branch = "master"
   name = "github.com/rainycape/unidecode"
   packages = ["."]
   revision = "cb7f23ec59bec0d61b19c56cd88cee3d0cc1870c"
@@ -448,6 +442,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "375a72ead309e42a15def911b0ea74eb7bad399b1457e3c04c9796f3b49939ef"
+  inputs-digest = "404098bf81096d70ce78fc0d64c9c6cec9768399be2eb54fb7ce9a105f01b323"
   solver-name = "gps-cdcl"
   solver-version = 1
