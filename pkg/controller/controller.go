@@ -21,8 +21,6 @@ type DashboardsController struct {
 	reconciler  differ.Interface
 }
 
-const reconcileTask string = "reconcile"
-
 func New(dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string, reconciler differ.Interface) *DashboardsController {
 	return &DashboardsController{
 		dashboards:  dashboards,
