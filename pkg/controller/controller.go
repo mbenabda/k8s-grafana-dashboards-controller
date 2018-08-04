@@ -23,39 +23,7 @@ type DashboardsController struct {
 
 const reconcileTask string = "reconcile"
 
-func New(dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string, dryRun bool) *DashboardsController {
-	var reconciler differ.Interface
-	if dryRun {
-		reconciler = differ.NewFuncsBased(differ.Funcs{
-			ListDashboards: func(ctx context.Context) ([]*grafana.DashboardResult, error) {
-				return findMarkedDashboards(ctx, dashboards, markerTag)
-			},
-			Create: func(ctx context.Context, dash *grafana.Dashboard) error {
-				slug, _ := dash.Slug()
-				log.Printf("created dashboard %v\n", slug)
-				return nil
-			},
-			Update: func(ctx context.Context, dash *grafana.Dashboard) error {
-				slug, _ := dash.Slug()
-				log.Printf("updated dashboard %v\n", slug)
-				return nil
-			},
-			Delete: func(ctx context.Context, slug string) error {
-				log.Printf("deleted dashboard %v\n", slug)
-				return nil
-			},
-		})
-	} else {
-		reconciler = differ.NewFuncsBased(differ.Funcs{
-			ListDashboards: func(ctx context.Context) ([]*grafana.DashboardResult, error) {
-				return findMarkedDashboards(ctx, dashboards, markerTag)
-			},
-			Create: dashboards.Import,
-			Update: dashboards.ImportAndOverwrite,
-			Delete: dashboards.Delete,
-		})
-	}
-
+func New(dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string, reconciler differ.Interface) *DashboardsController {
 	return &DashboardsController{
 		dashboards:  dashboards,
 		configmaps:  configmaps,
@@ -87,13 +55,19 @@ func (c *DashboardsController) Run(ctx context.Context) {
 func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 	log.Println("reconciling")
 
+	currentDashboards, err := findMarkedDashboards(ctx, c.dashboards, c.markerTag)
+	if err != nil {
+		c.errorLogger.Printf("failed to list dashboards declared in Grafana: %v\n", err)
+		return true
+	}
+
 	desiredDashboards, err := listDesiredDashboards(ctx, c.errorLogger, c.dashboards, c.configmaps, c.markerTag)
 	if err != nil {
 		c.errorLogger.Printf("failed to list dashboards declared in the ConfigMaps: %v\n", err)
 		return true
 	}
 
-	if err = c.reconciler.Apply(ctx, desiredDashboards); err != nil {
+	if err = c.reconciler.Apply(ctx, currentDashboards, desiredDashboards); err != nil {
 		c.errorLogger.Printf("failed to apply plan : %v\n", err)
 	} else {
 		log.Println("reconciliation was successful")

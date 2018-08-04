@@ -433,8 +433,7 @@
     "util/cert",
     "util/flowcontrol",
     "util/homedir",
-    "util/integer",
-    "util/workqueue"
+    "util/integer"
   ]
   revision = "d92e8497f71b7b4e0494e5bd204b48d34bd6f254"
   version = "v4.0.0"
@@ -442,6 +441,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "404098bf81096d70ce78fc0d64c9c6cec9768399be2eb54fb7ce9a105f01b323"
+  inputs-digest = "0faa44229a3d655e9585e69fb0892aa959923e8ec617cb320da16c8f5645355b"
   solver-name = "gps-cdcl"
   solver-version = 1

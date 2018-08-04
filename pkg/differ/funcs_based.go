@@ -2,26 +2,74 @@ package differ
 
 import (
 	"context"
+	"fmt"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 )
 
 type Funcs struct {
-	ListDashboards func(ctx context.Context) ([]*grafana.DashboardResult, error)
-	Create         func(context.Context, *grafana.Dashboard) error
-	Update         func(context.Context, *grafana.Dashboard) error
-	Delete         func(context.Context, string) error
+	Create func(context.Context, *grafana.Dashboard) error
+	Update func(context.Context, *grafana.Dashboard) error
+	Delete func(context.Context, string) error
+}
+
+func NewNoOp() Interface {
+	return NewFuncsBased(Funcs{
+		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
+			slug, _ := dash.Slug()
+			fmt.Printf("created dashboard %v\n", slug)
+			return nil
+		},
+		Update: func(ctx context.Context, dash *grafana.Dashboard) error {
+			slug, _ := dash.Slug()
+			fmt.Printf("updated dashboard %v\n", slug)
+			return nil
+		},
+		Delete: func(ctx context.Context, slug string) error {
+			fmt.Printf("deleted dashboard %v\n", slug)
+			return nil
+		},
+	})
+}
+
+func New(dashboards grafana.DashboardsInterface) Interface {
+	return NewFuncsBased(Funcs{
+		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
+			slug, err := dash.Slug()
+			if err != nil {
+				return fmt.Errorf("unable to get slug of dashboard %v", dash)
+			}
+			err = dashboards.Import(ctx, dash)
+			if err != nil {
+				return fmt.Errorf("unable to create dashboard %v: %v", slug, err)
+			}
+			return nil
+		},
+		Update: func(ctx context.Context, dash *grafana.Dashboard) error {
+			slug, err := dash.Slug()
+			if err != nil {
+				return fmt.Errorf("unable to get slug of dashboard %v", dash)
+			}
+			err = dashboards.ImportAndOverwrite(ctx, dash)
+			if err != nil {
+				return fmt.Errorf("unable to update dashboard %v: %v", slug, err)
+			}
+			return nil
+		},
+		Delete: func(ctx context.Context, slug string) error {
+			err := dashboards.Delete(ctx, slug)
+			if err != nil {
+				return fmt.Errorf("unable to delete dashboard %v: %v", slug, err)
+			}
+			return nil
+		},
+	})
 }
 
 func NewFuncsBased(funcs Funcs) Interface {
 	return funcsBasedDiffer{funcs}
 }
 
-func (this funcsBasedDiffer) Apply(ctx context.Context, desired []*grafana.Dashboard) error {
-	current, err := this.Funcs.ListDashboards(ctx)
-	if err != nil {
-		return err
-	}
-
+func (this funcsBasedDiffer) Apply(ctx context.Context, current []*grafana.DashboardResult, desired []*grafana.Dashboard) error {
 	for _, change := range plan(current, desired) {
 		err := change.apply(ctx, this.Funcs)
 		if err != nil {

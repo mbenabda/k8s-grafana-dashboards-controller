@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/cache"
+	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/differ"
 	"time"
 
 	"os"
@@ -137,10 +138,17 @@ func main() {
 	}
 
 	log.Println("[ dry-run =", dryRun, "]", "running against", grafanaOptions.URL, "with", *filterOptions)
-	run(grafana, clients, filterOptions, dryRun)
+	var reconciler differ.Interface
+	if dryRun {
+		reconciler = differ.NewNoOp()
+	} else {
+		reconciler = differ.New(grafana.Dashboards())
+	}
+
+	run(grafana, clients, filterOptions, reconciler)
 }
 
-func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions *FilterOptions, dryRun bool) {
+func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions *FilterOptions, reconciler differ.Interface) {
 	configmaps := cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
@@ -176,7 +184,7 @@ func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions 
 			grafana.Dashboards(),
 			configmaps,
 			filterOptions.MarkerTag,
-			dryRun,
+			reconciler,
 		).Run(ctx)
 		return nil
 	})

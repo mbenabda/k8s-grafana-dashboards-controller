@@ -6,5 +6,5 @@ import (
 )
 
 type Interface interface {
-	Apply(ctx context.Context, desired []*grafana.Dashboard) error
+	Apply(ctx context.Context, current []*grafana.DashboardResult, desired []*grafana.Dashboard) error
 }
