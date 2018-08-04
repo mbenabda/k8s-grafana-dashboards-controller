@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
+	"strings"
 )
 
 type Funcs struct {
@@ -71,12 +72,24 @@ func NewFuncsBased(funcs Funcs) Interface {
 }
 
 func (this funcsBasedDiffer) Apply(ctx context.Context, current []*grafana.DashboardResult, desired []*grafana.Dashboard) error {
+	errors := map[change]error{}
 	for _, change := range plan(current, desired) {
 		err := change.apply(ctx, this.Funcs)
 		if err != nil {
-			return err
+			errors[change] = err
 		}
 	}
+
+	if len(errors) > 0 {
+		prettyErrors := []string{}
+
+		for _, err := range errors {
+			prettyErrors = append(prettyErrors, fmt.Sprintf("%v", err))
+		}
+
+		return fmt.Errorf(strings.Join(prettyErrors, "\n"))
+	}
+
 	return nil
 }
 
