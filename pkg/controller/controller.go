@@ -55,7 +55,7 @@ func (c *DashboardsController) Run(ctx context.Context) {
 func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 	log.Println("reconciling")
 
-	currentDashboards, err := findMarkedDashboards(ctx, c.dashboards, c.markerTag)
+	currentDashboards, err := findManagedDashboards(ctx, c.dashboards, c.markerTag)
 	if err != nil {
 		c.errorLogger.Printf("failed to list dashboards declared in Grafana: %v\n", err)
 		return true
@@ -76,10 +76,17 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 	return true
 }
 
-func findMarkedDashboards(ctx context.Context, dashboards grafana.DashboardsInterface, markerTag string) ([]*grafana.DashboardResult, error) {
-	return dashboards.Search(ctx, grafana.DashboardSearchQuery{
-		Tags: []string{markerTag},
-	})
+func findManagedDashboards(ctx context.Context, dashboards grafana.DashboardsInterface, markerTag string) ([]*grafana.DashboardResult, error) {
+	var query grafana.DashboardSearchQuery
+
+	if markerTag == "" {
+		query = grafana.DashboardSearchQuery{}
+	} else {
+		query = grafana.DashboardSearchQuery{
+			Tags: []string{markerTag},
+		}
+	}
+	return dashboards.Search(ctx, query)
 }
 
 func listDesiredDashboards(ctx context.Context, errorLogger *log.Logger, dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string) ([]*grafana.Dashboard, error) {

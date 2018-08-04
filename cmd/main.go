@@ -96,7 +96,6 @@ func main() {
 	kingpin.Flag("marker-tag", "unique tag value to be used as a marker for dashboards managed by this instance of the controller").
 		Envar("MARKER_TAG").
 		PlaceHolder("managed").
-		Required().
 		StringVar(&filterOptions.MarkerTag)
 
 	kingpin.Flag("watch-namespace", "namespace to wath for Configmaps. defaults to all namespaces").

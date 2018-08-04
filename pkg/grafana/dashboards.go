@@ -68,9 +68,14 @@ func (c DashboardsClient) Delete(ctx context.Context, slug string) error {
 }
 
 func (c DashboardsClient) Search(ctx context.Context, query DashboardSearchQuery) ([]*DashboardResult, error) {
-	req, err := c.newGetRequest(ctx, searchPath, url.Values{
-		"tag": query.Tags,
-	})
+	queryParams := url.Values{}
+	if len(query.Tags) > 0 {
+		for _, tag := range query.Tags {
+			queryParams.Add("tag", tag)
+		}
+	}
+
+	req, err := c.newGetRequest(ctx, searchPath, queryParams)
 
 	if err != nil {
 		return nil, fmt.Errorf("could not build dashboards search request with query %v: %v", query, err)

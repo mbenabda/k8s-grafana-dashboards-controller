@@ -3,6 +3,7 @@ package differ
 import (
 	"context"
 	"fmt"
+	"log"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 )
 
@@ -16,16 +17,16 @@ func NewNoOp() Interface {
 	return NewFuncsBased(Funcs{
 		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
 			slug, _ := dash.Slug()
-			fmt.Printf("created dashboard %v\n", slug)
+			log.Printf("created dashboard %v\n", slug)
 			return nil
 		},
 		Update: func(ctx context.Context, dash *grafana.Dashboard) error {
 			slug, _ := dash.Slug()
-			fmt.Printf("updated dashboard %v\n", slug)
+			log.Printf("updated dashboard %v\n", slug)
 			return nil
 		},
 		Delete: func(ctx context.Context, slug string) error {
-			fmt.Printf("deleted dashboard %v\n", slug)
+			log.Printf("deleted dashboard %v\n", slug)
 			return nil
 		},
 	})

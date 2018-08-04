@@ -61,6 +61,10 @@ func (d DashboardResult) Slug() (string, error) {
 }
 
 func (d Dashboard) AddTag(tag string) error {
+	if tag == "" {
+		return nil
+	}
+
 	tagsObj, err := d.data.get("dashboard").get("tags").asArray()
 	if err != nil {
 		return err
