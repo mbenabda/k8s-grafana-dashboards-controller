@@ -126,14 +126,12 @@ func plan(current []*grafana.DashboardResult, desired []*grafana.Dashboard) []ch
 		}
 	}
 
-	desiredSlugs := map[string]bool{}
 	for _, dashboard := range desired {
 		slug, err := dashboard.Slug()
 		if err != nil {
 			continue
 		}
 
-		desiredSlugs[slug] = true
 		if currentSlugs[slug] {
 			plan[slug] = updateAction{
 				dashboard: dashboard,
