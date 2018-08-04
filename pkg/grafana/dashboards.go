@@ -98,7 +98,7 @@ func (c DashboardsClient) Search(ctx context.Context, query DashboardSearchQuery
 		return nil, fmt.Errorf("could not read search results of dashboards search with query %v: %v", query, err)
 	}
 
-	return newDashboardSearchResults(bodyBytes)
+	return NewDashboardSearchResults(bodyBytes)
 }
 
 func readErrorBodyAsString(res *http.Response) string {

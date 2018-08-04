@@ -21,7 +21,7 @@ func NewDashboard(body []byte) (*Dashboard, error) {
 	return &Dashboard{data: *j}, nil
 }
 
-func newDashboardSearchResults(body []byte) ([]*DashboardResult, error) {
+func NewDashboardSearchResults(body []byte) ([]*DashboardResult, error) {
 	j, err := newJsonObj(body)
 	if err != nil {
 		return nil, err
