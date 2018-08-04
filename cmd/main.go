@@ -137,17 +137,21 @@ func main() {
 	}
 
 	log.Println("[ dry-run =", dryRun, "]", "running against", grafanaOptions.URL, "with", *filterOptions)
-	var reconciler differ.Interface
+	var reconciler differ.DashboardsChangesApplyFuncs
 	if dryRun {
-		reconciler = differ.NewNoOp()
+		reconciler = differ.NoOpPlanApplyFuncs
 	} else {
-		reconciler = differ.New(grafana.Dashboards())
+		reconciler = differ.NewClientBasedPlanApplyFuncs(grafana.Dashboards())
 	}
 
-	run(grafana, clients, filterOptions, reconciler)
+	run(grafana,
+		clients,
+		filterOptions,
+		differ.NewPlanner(),
+		reconciler)
 }
 
-func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions *FilterOptions, reconciler differ.Interface) {
+func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions *FilterOptions, dashboardChangesPlanner differ.DashboardsChangesPlanner, reconciler differ.DashboardsChangesApplyFuncs) {
 	configmaps := cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
@@ -183,6 +187,7 @@ func run(grafana grafana.Interface, clients kubernetes.Interface, filterOptions 
 			grafana.Dashboards(),
 			configmaps,
 			filterOptions.MarkerTag,
+			dashboardChangesPlanner,
 			reconciler,
 		).Run(ctx)
 		return nil

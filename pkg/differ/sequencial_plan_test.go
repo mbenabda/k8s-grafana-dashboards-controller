@@ -122,7 +122,7 @@ func TestShouldDeleteRemovedDashboard(t *testing.T) {
 	}
 }
 
-func TestIgnoreCurrentDashboardWithoutUri(t *testing.T) {
+func TestShouldIgnoreCurrentDashboardWithoutUri(t *testing.T) {
 	currents, _ := grafana.NewDashboardSearchResults([]byte(`
 		[
 			{}
@@ -142,9 +142,11 @@ func TestIgnoreCurrentDashboardWithoutUri(t *testing.T) {
 }
 
 func diff(current []*grafana.DashboardResult, desired []*grafana.Dashboard) ([]string, error) {
-	changes := []string{}
+	ctx := context.Background()
 
-	err := differ.NewFuncsBased(differ.Funcs{
+	plan := differ.NewPlanner().Plan(ctx, current, desired)
+	changes := []string{}
+	err := plan.Apply(ctx, differ.DashboardsChangesApplyFuncs{
 		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
 			change := fmt.Sprintf("create %v", dash)
 			changes = append(changes, change)
@@ -154,6 +156,7 @@ func diff(current []*grafana.DashboardResult, desired []*grafana.Dashboard) ([]s
 		Update: func(ctx context.Context, dash *grafana.Dashboard) error {
 			change := fmt.Sprintf("update %v", dash)
 			changes = append(changes, change)
+			fmt.Printf("change = %v", change)
 			return nil
 		},
 		Delete: func(ctx context.Context, slug string) error {
@@ -162,7 +165,6 @@ func diff(current []*grafana.DashboardResult, desired []*grafana.Dashboard) ([]s
 			fmt.Printf("change = %v", change)
 			return nil
 		},
-	}).Apply(context.Background(), current, desired)
-
+	})
 	return changes, err
 }

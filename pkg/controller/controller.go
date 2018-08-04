@@ -18,16 +18,18 @@ type DashboardsController struct {
 	configmaps  cache.SharedIndexInformer
 	errorLogger *log.Logger
 	markerTag   string
-	reconciler  differ.Interface
+	planner     differ.DashboardsChangesPlanner
+	applier     differ.DashboardsChangesApplyFuncs
 }
 
-func New(dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string, reconciler differ.Interface) *DashboardsController {
+func New(dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string, planner differ.DashboardsChangesPlanner, applier differ.DashboardsChangesApplyFuncs) *DashboardsController {
 	return &DashboardsController{
 		dashboards:  dashboards,
 		configmaps:  configmaps,
 		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
 		markerTag:   markerTag,
-		reconciler:  reconciler,
+		planner:     planner,
+		applier:     applier,
 	}
 }
 
@@ -65,7 +67,9 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 		return true
 	}
 
-	if err = c.reconciler.Apply(ctx, currentDashboards, desiredDashboards); err != nil {
+	plan := c.planner.Plan(ctx, currentDashboards, desiredDashboards)
+
+	if err = plan.Apply(ctx, c.applier); err != nil {
 		c.errorLogger.Printf("failed to apply plan : %v\n", err)
 	} else {
 		log.Println("reconciliation was successful")
