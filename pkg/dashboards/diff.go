@@ -1,50 +1,27 @@
-package differ
+package dashboards
 
 import (
 	"context"
 	"fmt"
 	"log"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
-	"strings"
 )
 
-type DashboardsChangesPlanner interface {
+type Planner interface {
 	Plan(ctx context.Context, current []*grafana.DashboardResult, desired []*grafana.Dashboard) Plan
 }
 
-type Plan struct {
-	changes []change
+type Plan interface {
+	Apply(ctx context.Context, funcs ApplyFuncs) error
 }
 
-func (this Plan) Apply(ctx context.Context, funcs DashboardsChangesApplyFuncs) error {
-	errors := map[change]error{}
-	for _, change := range this.changes {
-		err := change.visit(ctx, funcs)
-		if err != nil {
-			errors[change] = err
-		}
-	}
-
-	if len(errors) > 0 {
-		prettyErrors := []string{}
-
-		for _, err := range errors {
-			prettyErrors = append(prettyErrors, fmt.Sprintf("%v", err))
-		}
-
-		return fmt.Errorf(strings.Join(prettyErrors, "\n"))
-	}
-
-	return nil
-}
-
-type DashboardsChangesApplyFuncs struct {
+type ApplyFuncs struct {
 	Create func(context.Context, *grafana.Dashboard) error
 	Update func(context.Context, *grafana.Dashboard) error
 	Delete func(context.Context, string) error
 }
 
-var NoOpPlanApplyFuncs = DashboardsChangesApplyFuncs{
+var NoOpPlanApplyFuncs = ApplyFuncs{
 	Create: func(ctx context.Context, dash *grafana.Dashboard) error {
 		slug, _ := dash.Slug()
 		log.Printf("created dashboard %v\n", slug)
@@ -61,8 +38,8 @@ var NoOpPlanApplyFuncs = DashboardsChangesApplyFuncs{
 	},
 }
 
-func NewClientBasedPlanApplyFuncs(dashboards grafana.DashboardsInterface) DashboardsChangesApplyFuncs {
-	return DashboardsChangesApplyFuncs{
+func NewClientBasedPlanApplyFuncs(dashboards grafana.DashboardsInterface) ApplyFuncs {
+	return ApplyFuncs{
 		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
 			slug, err := dash.Slug()
 			if err != nil {

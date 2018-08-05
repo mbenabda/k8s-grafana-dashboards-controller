@@ -1,9 +1,9 @@
-package differ_test
+package dashboards_test
 
 import (
 	"context"
 	"fmt"
-	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/differ"
+	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/dashboards"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 	"testing"
 )
@@ -144,9 +144,9 @@ func TestShouldIgnoreCurrentDashboardWithoutUri(t *testing.T) {
 func diff(current []*grafana.DashboardResult, desired []*grafana.Dashboard) ([]string, error) {
 	ctx := context.Background()
 
-	plan := differ.NewPlanner().Plan(ctx, current, desired)
+	plan := dashboards.NewPlanner().Plan(ctx, current, desired)
 	changes := []string{}
-	err := plan.Apply(ctx, differ.DashboardsChangesApplyFuncs{
+	err := plan.Apply(ctx, dashboards.ApplyFuncs{
 		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
 			change := fmt.Sprintf("create %v", dash)
 			changes = append(changes, change)

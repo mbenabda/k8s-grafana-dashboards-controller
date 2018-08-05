@@ -1,4 +1,4 @@
-package controller
+package dashboards
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/tools/cache"
 	"log"
-	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/differ"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 	"os"
 	"reflect"
@@ -18,18 +17,18 @@ type DashboardsController struct {
 	configmaps  cache.SharedIndexInformer
 	errorLogger *log.Logger
 	markerTag   string
-	planner     differ.DashboardsChangesPlanner
-	applier     differ.DashboardsChangesApplyFuncs
+	planner     Planner
+	applyFuncs  ApplyFuncs
 }
 
-func New(dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string, planner differ.DashboardsChangesPlanner, applier differ.DashboardsChangesApplyFuncs) *DashboardsController {
+func NewController(dashboards grafana.DashboardsInterface, configmapsInformer cache.SharedIndexInformer, markerTag string, planner Planner, applyFuncs ApplyFuncs) *DashboardsController {
 	return &DashboardsController{
 		dashboards:  dashboards,
-		configmaps:  configmaps,
+		configmaps:  configmapsInformer,
 		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
 		markerTag:   markerTag,
 		planner:     planner,
-		applier:     applier,
+		applyFuncs:  applyFuncs,
 	}
 }
 
@@ -61,7 +60,7 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 		return true
 	}
 
-	desiredDashboards, err := listDesiredDashboards(ctx, c.errorLogger, c.dashboards, c.configmaps, c.markerTag)
+	desiredDashboards, err := listDesiredDashboards(ctx, c.errorLogger, c.configmaps, c.markerTag)
 	if err != nil {
 		c.errorLogger.Printf("failed to list dashboards declared in the ConfigMaps: %v\n", err)
 		return true
@@ -69,7 +68,7 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 
 	plan := c.planner.Plan(ctx, currentDashboards, desiredDashboards)
 
-	if err = plan.Apply(ctx, c.applier); err != nil {
+	if err = plan.Apply(ctx, c.applyFuncs); err != nil {
 		c.errorLogger.Printf("failed to apply plan : %v\n", err)
 	} else {
 		log.Println("reconciliation was successful")
@@ -79,19 +78,17 @@ func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
 }
 
 func findManagedDashboards(ctx context.Context, dashboards grafana.DashboardsInterface, markerTag string) ([]*grafana.DashboardResult, error) {
-	var query grafana.DashboardSearchQuery
-
-	if markerTag == "" {
-		query = grafana.DashboardSearchQuery{}
-	} else {
-		query = grafana.DashboardSearchQuery{
-			Tags: []string{markerTag},
-		}
+	tags := []string{}
+	if markerTag != "" {
+		tags = append(tags, markerTag)
 	}
-	return dashboards.Search(ctx, query)
+
+	return dashboards.Search(ctx, grafana.DashboardSearchQuery{
+		Tags: tags,
+	})
 }
 
-func listDesiredDashboards(ctx context.Context, errorLogger *log.Logger, dashboards grafana.DashboardsInterface, configmaps cache.SharedIndexInformer, markerTag string) ([]*grafana.Dashboard, error) {
+func listDesiredDashboards(ctx context.Context, errorLogger *log.Logger, configmaps cache.SharedIndexInformer, markerTag string) ([]*grafana.Dashboard, error) {
 	desiredDashboards := []*grafana.Dashboard{}
 	for _, cmObj := range configmaps.GetStore().List() {
 		cm := cmObj.(*v1.ConfigMap)
