@@ -10,6 +10,14 @@ import (
 	"path"
 )
 
+type grafanaClient struct {
+	dashboards DashboardsInterface
+}
+
+func (c grafanaClient) Dashboards() DashboardsInterface {
+	return c.dashboards
+}
+
 type clientBase struct {
 	baseURL     *url.URL
 	httpClient  *http.Client
@@ -26,8 +34,8 @@ func NewWithApiKeyAndClient(baseURL *url.URL, client *http.Client, apiKey string
 		return nil, fmt.Errorf("an API key is required to authenticate against the Grafana API")
 	}
 
-	return GrafanaClient{
-		dashboards: DashboardsClient{
+	return grafanaClient{
+		dashboards: dashboardsClient{
 			clientBase{
 				baseURL:     baseURL,
 				httpClient:  client,
@@ -46,8 +54,8 @@ func NewWithUserCredentialsAndClient(baseURL *url.URL, client *http.Client, user
 		return nil, fmt.Errorf("a username is required to authenticate against the Grafana API")
 	}
 
-	return GrafanaClient{
-		dashboards: DashboardsClient{
+	return grafanaClient{
+		dashboards: dashboardsClient{
 			clientBase{
 				baseURL:    baseURL,
 				httpClient: client,

@@ -150,19 +150,16 @@ func diff(current []*grafana.DashboardResult, desired []*grafana.Dashboard) ([]s
 		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
 			change := fmt.Sprintf("create %v", dash)
 			changes = append(changes, change)
-			fmt.Printf("change = %v", change)
 			return nil
 		},
 		Update: func(ctx context.Context, dash *grafana.Dashboard) error {
 			change := fmt.Sprintf("update %v", dash)
 			changes = append(changes, change)
-			fmt.Printf("change = %v", change)
 			return nil
 		},
 		Delete: func(ctx context.Context, slug string) error {
 			change := fmt.Sprintf("delete %v", slug)
 			changes = append(changes, change)
-			fmt.Printf("change = %v", change)
 			return nil
 		},
 	})

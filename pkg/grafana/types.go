@@ -18,11 +18,3 @@ type DashboardsInterface interface {
 	Delete(ctx context.Context, slug string) error
 	Search(ctx context.Context, query DashboardSearchQuery) ([]*DashboardResult, error)
 }
-
-type GrafanaClient struct {
-	dashboards DashboardsInterface
-}
-
-func (c GrafanaClient) Dashboards() DashboardsInterface {
-	return c.dashboards
-}

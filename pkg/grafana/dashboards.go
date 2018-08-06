@@ -13,11 +13,11 @@ const dashboardsPath = "api/dashboards/db"
 const importPath = "api/dashboards/import"
 const searchPath = "api/search"
 
-type DashboardsClient struct {
+type dashboardsClient struct {
 	clientBase
 }
 
-func (c DashboardsClient) Import(ctx context.Context, dashboard *Dashboard) error {
+func (c dashboardsClient) Import(ctx context.Context, dashboard *Dashboard) error {
 	data, err := dashboard.data.marshalJSON()
 	if err != nil {
 		return fmt.Errorf("could not marshal dashboard: %v", err)
@@ -41,12 +41,12 @@ func (c DashboardsClient) Import(ctx context.Context, dashboard *Dashboard) erro
 	return nil
 }
 
-func (c DashboardsClient) ImportAndOverwrite(ctx context.Context, dashboard *Dashboard) error {
+func (c dashboardsClient) ImportAndOverwrite(ctx context.Context, dashboard *Dashboard) error {
 	dashboard.data.set("overwrite", true)
 	return c.Import(ctx, dashboard)
 }
 
-func (c DashboardsClient) Delete(ctx context.Context, slug string) error {
+func (c dashboardsClient) Delete(ctx context.Context, slug string) error {
 	uri := path.Join(dashboardsPath, slug)
 	req, err := c.newDeleteRequest(ctx, uri)
 	if err != nil {
@@ -67,7 +67,7 @@ func (c DashboardsClient) Delete(ctx context.Context, slug string) error {
 	return nil
 }
 
-func (c DashboardsClient) Search(ctx context.Context, query DashboardSearchQuery) ([]*DashboardResult, error) {
+func (c dashboardsClient) Search(ctx context.Context, query DashboardSearchQuery) ([]*DashboardResult, error) {
 	queryParams := url.Values{}
 	if len(query.Tags) > 0 {
 		for _, tag := range query.Tags {
