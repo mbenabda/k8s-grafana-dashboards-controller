@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-type DashboardsController struct {
+type dashboardsController struct {
 	dashboards  grafana.DashboardsInterface
 	configmaps  cache.SharedIndexInformer
 	errorLogger *log.Logger
@@ -21,8 +21,8 @@ type DashboardsController struct {
 	applyFuncs  ApplyFuncs
 }
 
-func NewController(dashboards grafana.DashboardsInterface, configmapsInformer cache.SharedIndexInformer, markerTag string, planner Planner, applyFuncs ApplyFuncs) *DashboardsController {
-	return &DashboardsController{
+func NewController(dashboards grafana.DashboardsInterface, configmapsInformer cache.SharedIndexInformer, markerTag string, planner Planner, applyFuncs ApplyFuncs) *dashboardsController {
+	return &dashboardsController{
 		dashboards:  dashboards,
 		configmaps:  configmapsInformer,
 		errorLogger: log.New(os.Stderr, "", log.LstdFlags),
@@ -32,14 +32,27 @@ func NewController(dashboards grafana.DashboardsInterface, configmapsInformer ca
 	}
 }
 
-func (c *DashboardsController) Run(ctx context.Context) {
+func (c *dashboardsController) Run(ctx context.Context) {
 	if !cache.WaitForCacheSync(ctx.Done(), c.configmaps.HasSynced) {
 		return
 	}
 
 	go func() {
 		t := time.NewTicker(60 * time.Second)
-		for c.processWorkItem(ctx) {
+		defer t.Stop()
+
+		processWorkItem := func(ctx context.Context) bool {
+			log.Println("reconciling")
+
+			err := c.reconcile(ctx)
+			if err != nil {
+				c.errorLogger.Printf("%v\n", err)
+			}
+
+			return true
+		}
+
+		for processWorkItem(ctx) {
 			select {
 			case <-t.C:
 			case <-ctx.Done():
@@ -51,30 +64,27 @@ func (c *DashboardsController) Run(ctx context.Context) {
 	<-ctx.Done()
 }
 
-func (c *DashboardsController) processWorkItem(ctx context.Context) bool {
-	log.Println("reconciling")
-
+func (c *dashboardsController) reconcile(ctx context.Context) error {
 	currentDashboards, err := findManagedDashboards(ctx, c.dashboards, c.markerTag)
 	if err != nil {
-		c.errorLogger.Printf("failed to list dashboards declared in Grafana: %v\n", err)
-		return true
+		return fmt.Errorf("failed to list dashboards declared in Grafana: %v", err)
 	}
 
 	desiredDashboards, err := listDesiredDashboards(ctx, c.errorLogger, c.configmaps, c.markerTag)
 	if err != nil {
-		c.errorLogger.Printf("failed to list dashboards declared in the ConfigMaps: %v\n", err)
-		return true
+		return fmt.Errorf("failed to list dashboards declared in the ConfigMaps: %v", err)
 	}
 
-	plan := c.planner.Plan(ctx, currentDashboards, desiredDashboards)
+	err = c.planner.
+		Plan(ctx, currentDashboards, desiredDashboards).
+		Apply(ctx, c.applyFuncs)
 
-	if err = plan.Apply(ctx, c.applyFuncs); err != nil {
-		c.errorLogger.Printf("failed to apply plan : %v\n", err)
-	} else {
-		log.Println("reconciliation was successful")
+	if err != nil {
+		return fmt.Errorf("failed to apply plan : %v", err)
 	}
 
-	return true
+	log.Println("Grafana's dashboards have been updated")
+	return nil
 }
 
 func findManagedDashboards(ctx context.Context, dashboards grafana.DashboardsInterface, markerTag string) ([]*grafana.DashboardResult, error) {
