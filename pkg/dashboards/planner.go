@@ -2,21 +2,36 @@ package dashboards
 
 import (
 	"context"
-	"fmt"
+	log "github.com/sirupsen/logrus"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
-	"strings"
 )
 
+type Planner interface {
+	Plan(ctx context.Context, current []*grafana.DashboardResult, desired []*grafana.Dashboard) Plan
+}
+
+type Plan interface {
+	Apply(context.Context, DashboardChangesApplier) []error
+}
+
+type DashboardChangesApplier interface {
+	Create(context.Context, *grafana.Dashboard) error
+	Update(context.Context, *grafana.Dashboard) error
+	Delete(context.Context, string) error
+}
+
 type changesListPlanner struct {
+	logger *log.Entry
 }
 
 type changesListPlan struct {
 	Plan
 	changes []change
+	logger  *log.Entry
 }
 
 type change interface {
-	visit(context.Context, ApplyFuncs) error
+	visit(context.Context, DashboardChangesApplier) error
 }
 
 type createAction struct {
@@ -29,8 +44,10 @@ type deleteAction struct {
 	slug string
 }
 
-func NewPlanner() Planner {
-	return changesListPlanner{}
+func NewPlanner(logger *log.Entry) Planner {
+	return changesListPlanner{
+		logger: logger,
+	}
 }
 
 func (this changesListPlanner) Plan(ctx context.Context, current []*grafana.DashboardResult, desired []*grafana.Dashboard) Plan {
@@ -70,39 +87,38 @@ func (this changesListPlanner) Plan(ctx context.Context, current []*grafana.Dash
 		changes = append(changes, v)
 	}
 
-	return changesListPlan{changes: changes}
+	this.logger.Debugf("planed %d changes to current state", len(changes))
+
+	return changesListPlan{
+		logger:  this.logger,
+		changes: changes,
+	}
 }
 
-func (this changesListPlan) Apply(ctx context.Context, funcs ApplyFuncs) error {
-	errors := map[change]error{}
+func (this changesListPlan) Apply(ctx context.Context, funcs DashboardChangesApplier) []error {
+	var errors []error
 	for _, change := range this.changes {
 		err := change.visit(ctx, funcs)
 		if err != nil {
-			errors[change] = err
+			errors = append(errors, err)
 		}
 	}
 
 	if len(errors) > 0 {
-		prettyErrors := []string{}
-
-		for _, err := range errors {
-			prettyErrors = append(prettyErrors, fmt.Sprintf("%v", err))
-		}
-
-		return fmt.Errorf(strings.Join(prettyErrors, "\n"))
+		return errors
 	}
 
 	return nil
 }
 
-func (this createAction) visit(ctx context.Context, visitor ApplyFuncs) error {
+func (this createAction) visit(ctx context.Context, visitor DashboardChangesApplier) error {
 	return visitor.Create(ctx, this.dashboard)
 }
 
-func (this updateAction) visit(ctx context.Context, visitor ApplyFuncs) error {
+func (this updateAction) visit(ctx context.Context, visitor DashboardChangesApplier) error {
 	return visitor.Update(ctx, this.dashboard)
 }
 
-func (this deleteAction) visit(ctx context.Context, visitor ApplyFuncs) error {
+func (this deleteAction) visit(ctx context.Context, visitor DashboardChangesApplier) error {
 	return visitor.Delete(ctx, this.slug)
 }

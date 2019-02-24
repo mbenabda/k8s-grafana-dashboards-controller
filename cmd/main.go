@@ -15,7 +15,7 @@ import (
 
 	"os"
 
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net/url"
 	"os/signal"
 	"syscall"
@@ -63,6 +63,11 @@ func SelectorValueHolder(s kingpin.Settings) (target *LabelSelectorValueHolder) 
 }
 
 func main() {
+	fullTimestampFormatter := new(log.TextFormatter)
+	fullTimestampFormatter.FullTimestamp = true
+	logger := log.New()
+	logger.SetFormatter(fullTimestampFormatter)
+
 	grafanaOptions := &GrafanaOptions{}
 	cmFilter := &ConfigMapsFilter{}
 	var markerTag string
@@ -117,34 +122,33 @@ func main() {
 
 	grafana, err := buildGrafanaClient(grafanaOptions)
 	if err != nil {
-		errorLogger().Printf("could not build a grafana client : %v\n\n", err)
-		kingpin.Usage()
-		os.Exit(1)
+		logger.Fatalf("could not build a grafana client : %v\n\n", err)
 	}
 
 	k8s, err := buildK8sClient(kubeconfig)
 	if err != nil {
-		errorLogger().Printf("could not create kubernetes client : %v\n", err)
-		os.Exit(1)
+		logger.Fatalf("could not create kubernetes client : %v\n", err)
 	}
 
-	log.Println("[ dry-run =", dryRun, "]", "running against", grafanaOptions.URL, "with", *cmFilter)
-	var applyFuncs dashboards.ApplyFuncs
+	logger.WithField("dry-run", dryRun).Infof("running against %s with %v", grafanaOptions.URL, *cmFilter)
+	var dashboardChangesApplier dashboards.DashboardChangesApplier
 	if dryRun {
-		applyFuncs = dashboards.NoOpPlanApplyFuncs
+		dashboardChangesApplier = dashboards.NewDryRunApplier(logger)
 	} else {
-		applyFuncs = dashboards.NewClientBasedPlanApplyFuncs(grafana.Dashboards())
+		dashboardChangesApplier = dashboards.NewApplier(grafana.Dashboards())
 	}
 
-	run(grafana,
+	run(
+		logger,
+		grafana,
 		k8s,
 		cmFilter,
 		markerTag,
-		dashboards.NewPlanner(),
-		applyFuncs)
+		dashboards.NewPlanner(logger.WithField("component", "planner")),
+		dashboardChangesApplier)
 }
 
-func run(grafana grafana.Interface, k8s kubernetes.Interface, cmFilter *ConfigMapsFilter, markerTag string, planner dashboards.Planner, applyFuncs dashboards.ApplyFuncs) {
+func run(logger *log.Logger, grafana grafana.Interface, k8s kubernetes.Interface, cmFilter *ConfigMapsFilter, markerTag string, planner dashboards.Planner, dashboardChangesApplier dashboards.DashboardChangesApplier) {
 	configmapsInformer := cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
@@ -177,18 +181,19 @@ func run(grafana grafana.Interface, k8s kubernetes.Interface, cmFilter *ConfigMa
 
 	wg.Go(func() error {
 		dashboards.NewController(
+			logger,
 			grafana.Dashboards(),
 			configmapsInformer,
 			markerTag,
 			planner,
-			applyFuncs,
+			dashboardChangesApplier,
 		).Run(ctx)
 		return nil
 	})
 
 	select {
 	case s := <-sig:
-		log.Printf("received %v signal. Shutting down\n", s)
+		logger.Infof("received %v signal. Shutting down\n", s)
 		cancel()
 	case <-ctx.Done():
 	}
@@ -205,7 +210,7 @@ func buildGrafanaClient(opts *GrafanaOptions) (grafana.Interface, error) {
 		return grafana.NewWithApiKey(opts.URL, opts.APIKey)
 	}
 
-	return grafana.NewWithUserCredentials(opts.URL, opts.Username, opts.Password)
+	return grafana.NewWithBasicAuth(opts.URL, opts.Username, opts.Password)
 }
 
 func buildK8sClient(kubeconfig string) (kubernetes.Interface, error) {
@@ -222,8 +227,4 @@ func buildK8sConfig(kubeconfig string) (*rest.Config, error) {
 	}
 
 	return rest.InClusterConfig()
-}
-
-func errorLogger() *log.Logger {
-	return log.New(os.Stderr, "", log.LstdFlags)
 }

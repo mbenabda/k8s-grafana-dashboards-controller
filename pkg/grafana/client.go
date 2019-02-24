@@ -45,11 +45,11 @@ func NewWithApiKeyAndClient(baseURL *url.URL, client *http.Client, apiKey string
 	}, nil
 }
 
-func NewWithUserCredentials(baseURL *url.URL, username, password string) (Interface, error) {
-	return NewWithUserCredentialsAndClient(baseURL, http.DefaultClient, username, password)
+func NewWithBasicAuth(baseURL *url.URL, username, password string) (Interface, error) {
+	return NewWithBasicAuthAndClient(baseURL, http.DefaultClient, username, password)
 }
 
-func NewWithUserCredentialsAndClient(baseURL *url.URL, client *http.Client, username, password string) (Interface, error) {
+func NewWithBasicAuthAndClient(baseURL *url.URL, client *http.Client, username, password string) (Interface, error) {
 	if username == "" {
 		return nil, fmt.Errorf("a username is required to authenticate against the Grafana API")
 	}
@@ -93,15 +93,19 @@ func (c *clientBase) newRequest(ctx context.Context, method, uri string, params 
 		return nil, fmt.Errorf("could not create request : %v", err)
 	}
 
+	c.applyAuth(req)
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	return req.WithContext(ctx), nil
+}
+
+func (c *clientBase) applyAuth(req *http.Request) {
 	if c.bearerToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.bearerToken))
 	} else if c.basicAuth != nil {
 		p, _ := c.basicAuth.Password()
 		req.SetBasicAuth(c.basicAuth.Username(), p)
 	}
-
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-
-	return req.WithContext(ctx), nil
 }

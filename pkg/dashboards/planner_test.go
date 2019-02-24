@@ -3,6 +3,7 @@ package dashboards_test
 import (
 	"context"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/dashboards"
 	"mbenabda.com/k8s-grafana-dashboards-controller/pkg/grafana"
 	"testing"
@@ -63,6 +64,7 @@ func TestShouldCreateMissingDashboard(t *testing.T) {
 		t.Fatalf("expected missing desired dashboard to be created")
 	}
 }
+
 func TestShouldUpdateExistingDashboard(t *testing.T) {
 	desired, _ := grafana.NewDashboard([]byte(`
 		{
@@ -141,27 +143,32 @@ func TestShouldIgnoreCurrentDashboardWithoutUri(t *testing.T) {
 	}
 }
 
-func diff(current []*grafana.DashboardResult, desired []*grafana.Dashboard) ([]string, error) {
-	ctx := context.Background()
+type changesStrCollector struct {
+	changes []string
+}
 
-	plan := dashboards.NewPlanner().Plan(ctx, current, desired)
-	changes := []string{}
-	err := plan.Apply(ctx, dashboards.ApplyFuncs{
-		Create: func(ctx context.Context, dash *grafana.Dashboard) error {
-			change := fmt.Sprintf("create %v", dash)
-			changes = append(changes, change)
-			return nil
-		},
-		Update: func(ctx context.Context, dash *grafana.Dashboard) error {
-			change := fmt.Sprintf("update %v", dash)
-			changes = append(changes, change)
-			return nil
-		},
-		Delete: func(ctx context.Context, slug string) error {
-			change := fmt.Sprintf("delete %v", slug)
-			changes = append(changes, change)
-			return nil
-		},
-	})
-	return changes, err
+func (this *changesStrCollector) Create(ctx context.Context, dash *grafana.Dashboard) error {
+	change := fmt.Sprintf("create %v", dash)
+	this.changes = append(this.changes, change)
+	return nil
+}
+
+func (this *changesStrCollector) Update(ctx context.Context, dash *grafana.Dashboard) error {
+	change := fmt.Sprintf("update %v", dash)
+	this.changes = append(this.changes, change)
+	return nil
+}
+
+func (this *changesStrCollector) Delete(ctx context.Context, slug string) error {
+	change := fmt.Sprintf("delete %v", slug)
+	this.changes = append(this.changes, change)
+	return nil
+}
+
+func diff(current []*grafana.DashboardResult, desired []*grafana.Dashboard) ([]string, []error) {
+	ctx := context.Background()
+	plan := dashboards.NewPlanner(logrus.NewEntry(logrus.New())).Plan(ctx, current, desired)
+	applier := &changesStrCollector{}
+	errs := plan.Apply(ctx, applier)
+	return applier.changes, errs
 }
