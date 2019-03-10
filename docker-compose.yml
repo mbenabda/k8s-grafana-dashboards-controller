@@ -1,0 +1,26 @@
+version: "3"
+services:
+  grafana:
+    image: grafana/grafana:4.6.3
+    ports:
+      - 3000:3000
+    expose:
+      - "3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+  controller:
+    build:
+      context: ./
+    volumes:
+    - ~/.kube/config:/kubeconfig:ro
+    command:
+    - --kubeconfig=/kubeconfig
+    environment:
+      CONFIGMAP_SELECTOR: role=grafana-dashboard
+      GRAFANA_URL: http://grafana:3000/
+      WATCH_NAMESPACE: monitoring
+      GRAFANA_BASIC_AUTH_USERNAME: admin
+      GRAFANA_BASIC_AUTH_PASSWORD: admin
+      MARKER_TAG: managed
