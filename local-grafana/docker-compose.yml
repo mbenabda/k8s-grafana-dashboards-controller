@@ -1,0 +1,14 @@
+version: '2.1'
+services:
+
+  grafana:
+    image: grafana/grafana:4.6.3
+    ports:
+      - 3000:3000
+    environment:
+      - GF_INSTALL_PLUGINS=camptocamp-prometheus-alertmanager-datasource,grafana-piechart-panel
+    volumes:
+    - ./grafana-storage/plugins:/var/lib/grafana/plugins 
+    - ./grafana-storage/data:/var/lib/grafana/data
+    - ./grafana.ini:/etc/grafana/grafana.ini
+
