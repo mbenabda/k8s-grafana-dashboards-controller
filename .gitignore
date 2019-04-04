@@ -12,6 +12,7 @@ pids
 
 ### Go ###
 # Binaries for programs and plugins
+main
 *.exe
 *.exe~
 *.dll
